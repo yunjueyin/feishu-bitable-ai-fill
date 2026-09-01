@@ -11,7 +11,7 @@ import {
 } from './feishu.js';
 import { trialRun, runBatch, retryFailed, batchWriteCells } from './runner.js';
 
-export const APP_VERSION = '20260901a';
+export const APP_VERSION = '20260901b';
 
 const state = {
   cfg: loadCfg(),
@@ -21,97 +21,99 @@ const state = {
   sourceFieldId: '',
   aborted: false,
   running: false,
-  lastResult: null,   // 上次批量结果（供重跑失败项）
+  lastResult: null,
   lastRows: null,
   lastColumns: null,
   t0: 0,
 };
 
-/* ---------- DOM 引用 ---------- */
 const $ = (id) => document.getElementById(id);
 
+/* ---------- 渲染 ---------- */
 function render() {
   const app = $('app');
   app.innerHTML = '';
-  app.appendChild(el('div', { class: 'card' },
-    el('h3', {}, '① 数据表与源字段'),
-    el('div', { class: 'row' },
-      el('label', { class: 'field' }, el('span', {}, '源字段（每行该列内容作为素材喂给 AI）'),
-        (() => { const s = el('select', { id: 'sourceField' }); return s; })()),
-      el('button', { class: 'btn', id: 'btnReload', onclick: reloadTable }, '刷新表/字段'),
+  app.appendChild(el('div', { class: 'topbar' },
+    el('div', { class: 'brand' },
+      el('div', { class: 'brand-logo' }, 'AI'),
+      el('div', { class: 'brand-text' },
+        el('b', {}, 'AI 批量填表'),
+        el('span', {}, `v${APP_VERSION} · 飞书多维表内容生成`),
+      ),
     ),
-    el('div', { class: 'hint', id: 'tableInfo' }, '加载中…'),
-  ));
-
-  app.appendChild(el('div', { class: 'card' },
-    el('h3', {}, '② 模型配置（OpenAI 兼容，存本浏览器）'),
-    el('div', { class: 'row' },
-      el('label', { class: 'field' }, el('span', {}, 'Base URL（如 https://api.deepseek.com）'),
-        el('input', { type: 'text', id: 'baseUrl', placeholder: 'https://api.deepseek.com' })),
-      el('label', { class: 'field' }, el('span', {}, 'API Key'),
-        el('input', { type: 'password', id: 'apiKey', placeholder: 'sk-…' })),
-      el('label', { class: 'field' }, el('span', {}, '模型名（如 deepseek-chat）'),
-        el('input', { type: 'text', id: 'model', placeholder: 'deepseek-chat' })),
-      el('label', { class: 'field', style: 'max-width:110px' }, el('span', {}, '并发数'),
-        el('input', { type: 'text', id: 'llmConc' })),
-    ),
-    el('div', { class: 'hint' }, 'Key 仅保存在本浏览器 localStorage，不会上传；勿在公共设备勾选保存。'),
-  ));
-
-  app.appendChild(el('div', { class: 'card' },
-    el('h3', {}, '③ 总要求（给 AI 的输出约束）'),
-    el('div', { class: 'row' },
-      el('select', { id: 'tplSel', style: 'max-width:200px' }),
-      el('button', { class: 'btn', id: 'btnTplSave', onclick: onSaveTemplate }, '存为模板'),
-      el('button', { class: 'btn', id: 'btnTplDel', onclick: onDeleteTemplate }, '删除'),
-      el('button', { class: 'btn', id: 'btnTplExport', onclick: onExport }, '导出 JSON'),
-      el('button', { class: 'btn', id: 'btnTplImport', onclick: () => $('importFile').click() }, '导入 JSON'),
-      el('input', { type: 'file', id: 'importFile', accept: '.json', style: 'display:none' }),
-    ),
-    el('textarea', { id: 'requirement', placeholder: '粘贴总要求文档。例：\n基于素材撰写产品文案，要求口语化、每条不超过 30 字、不得出现"首先"等套话；输出 5 个分点，分别覆盖卖点、场景、人群、对比、行动号召。' }),
-    el('div', { class: 'row', style: 'margin-top:6px' },
-      el('label', { class: 'field', style: 'max-width:160px' }, el('span', {}, '分点标记样式'),
-        el('select', { id: 'marker' },
-          el('option', { value: '【1】' }, '【1】【2】…（推荐）'),
-          el('option', { value: '[1]' }, '[1] [2]…'),
-          el('option', { value: '1.' }, '1. 2.…'),
-          el('option', { value: '一、' }, '一、二、…'),
-        )),
-      el('label', { class: 'field', style: 'max-width:220px' }, el('span', {}, '运行范围'),
-        el('select', { id: 'skipFilled' },
-          el('option', { value: '1' }, '跳过「输出1」已有内容的行'),
-          el('option', { value: '0' }, '覆盖全部行'),
-        )),
+    el('div', { class: 'topbar-actions' },
+      el('button', { class: 'icon-btn', title: '设置', onclick: openSettings }, '⚙'),
     ),
   ));
 
-  app.appendChild(el('div', { class: 'card' },
-    el('h3', {}, '④ 执行'),
-    el('div', { class: 'row' },
-      el('button', { class: 'btn btn-primary', id: 'btnTrial', onclick: onTrial }, '试跑首行（预览，不写回）'),
+  // ① 数据源
+  app.appendChild(el('div', { class: 'panel', style: '--d:.05s' },
+    el('div', { class: 'panel-head' },
+      el('div', { class: 'panel-index' }, '1'),
+      el('div', { class: 'panel-title' }, '数据源'),
+    ),
+    el('div', { class: 'field-row' },
+      el('div', { class: 'form-field' },
+        el('div', { class: 'form-label' }, '源字段（每行该列内容作为素材喂给 AI）'),
+        (() => { const s = el('select', { id: 'sourceField' }); return s; })(),
+      ),
+    ),
+    el('div', { class: 'field-row' },
+      el('button', { class: 'btn', id: 'btnReload', onclick: reloadTable }, '↻ 刷新表 / 字段'),
+      el('div', { class: 'hint', id: 'tableInfo', style: 'flex:1' }, '加载中…'),
+    ),
+  ));
+
+  // ② 总要求
+  app.appendChild(el('div', { class: 'panel', style: '--d:.12s' },
+    el('div', { class: 'panel-head' },
+      el('div', { class: 'panel-index' }, '2'),
+      el('div', { class: 'panel-title' }, '总要求'),
+      el('div', { class: 'panel-extra' },
+        (() => { const s = el('select', { id: 'tplSel', style: 'max-width:170px' }); return s; })(),
+      ),
+    ),
+    el('textarea', { id: 'requirement', class: 'textarea-req', placeholder: '粘贴总要求文档（给 AI 的输出约束）。例：\n基于素材撰写产品文案，口语化、每条不超过 30 字、不得出现"首先"等套话；输出 5 个分点，分别覆盖卖点、场景、人群、对比、行动号召。' }),
+    el('div', { class: 'hint-block' },
+      '格式约定、并发数、模型配置等均在右上角 ', el('span', {}, '⚙'), ' 设置中调整。',
+    ),
+  ));
+
+  // ③ 执行
+  app.appendChild(el('div', { class: 'panel', style: '--d:.19s' },
+    el('div', { class: 'panel-head' },
+      el('div', { class: 'panel-index' }, '3'),
+      el('div', { class: 'panel-title' }, '执行'),
+    ),
+    el('div', { class: 'field-row' },
+      el('button', { class: 'btn btn-primary', id: 'btnTrial', onclick: onTrial }, '试跑首行（预览）'),
       el('button', { class: 'btn btn-primary', id: 'btnRun', onclick: onRun, disabled: true }, '开始批量生成'),
       el('button', { class: 'btn', id: 'btnRetry', onclick: onRetryFailed, disabled: true }, '重跑失败项'),
       el('button', { class: 'btn btn-danger', id: 'btnCancel', onclick: onCancelClick, disabled: true }, '取消'),
     ),
-    el('div', { class: 'hint', id: 'runHint' }, '先试跑首行确认分点结构，再批量。新列将创建为「多行文本」，默认追加在表尾（飞书不支持 API 指定列位置，可手动拖动列序）。'),
-    el('div', { id: 'progressBox' },
-      el('div', { class: 'progress-track' }, el('div', { id: 'progressBar' })),
+    el('div', { class: 'hint-block' }, '先试跑首行确认分点结构，再批量。新列将自动创建为「多行文本」，默认追加在表尾（飞书暂不支持 API 指定列位置，可手动拖动列序）。'),
+    el('div', { class: 'progress-wrap', id: 'progressBox' },
+      el('div', { class: 'progress-track' }, el('div', { class: 'progress-bar', id: 'progressBar' })),
       el('div', { class: 'progress-meta' },
         el('span', { id: 'progressStage' }, ''),
-        el('span', { id: 'progressCount' }, ''),
-        el('span', { id: 'progressPct' }, ''),
-        el('span', {}, '剩余 ', el('span', { id: 'progressEta' }, '--:--')),
+        el('span', {}, '进度 ', el('b', { id: 'progressCount' }, '0/0')),
+        el('span', { id: 'progressPct' }, '0%'),
+        el('span', {}, '剩余 ', el('b', { id: 'progressEta' }, '--:--')),
       ),
     ),
   ));
 
-  app.appendChild(el('div', { class: 'card', id: 'logPanel' },
-    el('div', { class: 'log-head', onclick: toggleLog }, '运行日志（点击折叠/展开）— v' + APP_VERSION),
-    el('div', { id: 'log' }),
+  // 日志
+  app.appendChild(el('div', { class: 'logbox', id: 'logbox', style: '--d:.26s' },
+    el('div', { class: 'log-toggle', onclick: toggleLog },
+      el('span', { class: 'chev' }, '▸'),
+      el('span', {}, '运行日志'),
+      el('span', { class: 'v' }, 'v' + APP_VERSION),
+    ),
+    el('div', { class: 'log-collapsible' },
+      el('div', {}, el('div', { id: 'log' })),
+    ),
   ));
-
-  const file = $('importFile');
-  file.addEventListener('change', onImport);
 }
 
 /* ---------- 工具 ---------- */
@@ -121,23 +123,17 @@ export function log(msg, cls = '') {
   const d = el('div', { class: 'row' }, el('span', { class: cls }, `[${new Date().toLocaleTimeString()}] ${msg}`));
   box.appendChild(d);
   box.scrollTop = box.scrollHeight;
+  const lb = $('logbox');
+  if (lb && !lb.classList.contains('open')) lb.classList.add('open');
 }
 
 function toggleLog() {
-  const box = $('log');
-  box.style.display = box.style.display === 'none' ? 'block' : 'none';
+  const lb = $('logbox');
+  if (lb) lb.classList.toggle('open');
 }
 
 function collectCfg() {
-  state.cfg = saveCfg({
-    baseUrl: $('baseUrl').value.trim(),
-    apiKey: $('apiKey').value.trim(),
-    model: $('model').value.trim(),
-    llmConc: Math.max(1, Math.min(8, Number($('llmConc').value) || 3)),
-    requirement: $('requirement').value,
-    marker: $('marker').value,
-    skipFilled: $('skipFilled').value === '1',
-  });
+  state.cfg = saveCfg({ requirement: $('requirement') ? $('requirement').value : state.cfg.requirement });
   return state.cfg;
 }
 
@@ -153,16 +149,110 @@ function setProgress(done, total, phase) {
 }
 
 function showCancelOverlay() {
-  return showModal('已请求取消', el('div', {}, '正在等待在途请求结束，已完成的单元格会保留。'), [
-    { label: '终止并保留', onClick: () => {} },
+  return showModal('已请求取消', el('div', { class: 'hint' }, '正在等待在途请求结束，已完成的单元格会保留。'), [
+    { label: '知道了', primary: true },
   ]);
+}
+
+/* ---------- 设置弹窗（收纳次要配置） ---------- */
+function openSettings() {
+  const cfg = loadCfg();
+  const content = el('div', {});
+  const importFile = el('input', { type: 'file', accept: '.json', style: 'display:none' });
+  importFile.addEventListener('change', () => { handleImportFile(importFile.files[0]); });
+
+  // 分组：模型配置
+  const gModel = el('div', { class: 'set-group' },
+    el('div', { class: 'set-group-title' }, '模型配置（OpenAI 兼容，仅存本浏览器）'),
+    el('div', { class: 'set-grid' },
+      liveField({ label: 'Base URL', value: cfg.baseUrl, placeholder: 'https://api.deepseek.com', key: 'baseUrl', full: true }),
+      liveField({ label: 'API Key', type: 'password', value: cfg.apiKey, placeholder: 'sk-…', key: 'apiKey', full: true }),
+      liveField({ label: '模型名', value: cfg.model, placeholder: 'deepseek-chat', key: 'model' }),
+      liveField({ label: '并发数（1–8）', value: cfg.llmConc || 3, key: 'llmConc', isNum: true }),
+    ),
+    el('div', { class: 'set-tip' }, 'Key 明文存于浏览器 localStorage，不会上传；勿在公共设备保存。'),
+  );
+
+  // 分组：输出设置
+  const gOut = el('div', { class: 'set-group' },
+    el('div', { class: 'set-group-title' }, '输出设置'),
+    el('div', { class: 'set-grid' },
+      liveField({
+        label: '分点标记样式', key: 'marker', value: cfg.marker || '【1】',
+        options: [
+          { value: '【1】', label: '【1】【2】…（推荐）' },
+          { value: '[1]', label: '[1] [2]…' },
+          { value: '1.', label: '1. 2.…' },
+          { value: '一、', label: '一、二、…' },
+        ],
+      }),
+      liveField({
+        label: '运行范围', key: 'skipFilled', value: cfg.skipFilled ? '1' : '0',
+        transform: (v) => v === '1',
+        options: [
+          { value: '1', label: '跳过「输出1」已有内容的行' },
+          { value: '0', label: '覆盖全部行' },
+        ],
+      }),
+    ),
+  );
+
+  // 分组：模板管理
+  const importWrap = el('div', {},
+    el('button', { class: 'btn', onclick: () => importFile.click() }, '导入 JSON'),
+    importFile,
+  );
+  const gTpl = el('div', { class: 'set-group' },
+    el('div', { class: 'set-group-title' }, '总要求模板'),
+    el('div', { class: 'field-row' },
+      el('button', { class: 'btn', onclick: onSaveTemplate }, '存为模板'),
+      el('button', { class: 'btn', onclick: onDeleteTemplate }, '删除当前'),
+      el('button', { class: 'btn', onclick: onExport }, '导出 JSON'),
+      importWrap,
+    ),
+    el('div', { class: 'set-tip' }, '导出文件不含 API Key；导入仅恢复模板与要求，不会覆盖密钥。'),
+  );
+
+  content.append(gModel, gOut, gTpl);
+  showModal('设置', content, [{ label: '完成', primary: true }]);
+}
+
+/** 把输入实时写入 state.cfg（避免弹窗关闭后 DOM 移除导致配置丢失） */
+function bindLive(input, key, isNum = false, transform = null) {
+  const ev = input.tagName === 'SELECT' ? 'change' : 'input';
+  input.addEventListener(ev, () => {
+    let v = input.value;
+    if (isNum) v = Math.max(1, Math.min(8, Number(v) || 3));
+    if (transform) v = transform(v);
+    state.cfg = saveCfg({ [key]: v });
+  });
+}
+
+/** 生成一个带标签、自动实时落盘的表单字段（扁平化，避免深层嵌套） */
+function liveField({ label, type = 'text', value = '', placeholder = '', key, isNum = false, transform = null, full = false, options = null }) {
+  const control = options
+    ? (() => {
+        const s = el('select', {}, ...options.map((o) => el('option', { value: o.value }, o.label)));
+        s.value = value;
+        bindLive(s, key, false, transform);
+        return s;
+      })()
+    : (() => {
+        const i = el('input', { type, value: value === '' ? '' : value, placeholder });
+        bindLive(i, key, isNum, transform);
+        return i;
+      })();
+  return el('div', { class: 'form-field' + (full ? ' full' : '') },
+    el('div', { class: 'form-label' }, label),
+    control,
+  );
 }
 
 /* ---------- 模板管理 ---------- */
 function refreshTemplates() {
   const sel = $('tplSel');
   sel.innerHTML = '';
-  sel.appendChild(el('option', { value: '' }, '— 选择模板 —'));
+  sel.appendChild(el('option', { value: '' }, '— 切换模板 —'));
   for (const t of state.cfg.templates || []) {
     sel.appendChild(el('option', { value: t.name }, t.name));
   }
@@ -200,8 +290,7 @@ function onExport() {
   log('配置已导出（不含 API Key）', 'ok');
 }
 
-function onImport() {
-  const file = $('importFile').files[0];
+function handleImportFile(file) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = () => {
@@ -217,8 +306,6 @@ function onImport() {
       });
       state.cfg = loadCfg();
       $('requirement').value = state.cfg.requirement;
-      $('marker').value = state.cfg.marker;
-      $('skipFilled').value = state.cfg.skipFilled ? '1' : '0';
       refreshTemplates();
       log(`已导入 ${templates.length} 套模板`, 'ok');
     } catch (e) {
@@ -241,7 +328,6 @@ export async function reloadTable() {
     const sel = $('sourceField');
     fillSelect(sel, fields.map((f) => ({ value: f.id, label: f.name + (f.isPrimary ? '（主键）' : '') })), '请选择源字段…');
     $('tableInfo').textContent = `当前表：${current.name} · 字段 ${fields.length} 个${viewId ? ' · 已按当前视图排序' : ''}`;
-    // 恢复上次源字段选择
     if (state.cfg.sourceFieldId && fields.some((f) => f.id === state.cfg.sourceFieldId)) {
       sel.value = state.cfg.sourceFieldId;
       state.sourceFieldId = state.cfg.sourceFieldId;
@@ -274,7 +360,7 @@ async function loadRows(columnNames = []) {
 async function onTrial() {
   const cfg = collectCfg();
   if (!state.sourceFieldId) return log('请先选择源字段', 'warn');
-  if (!cfg.baseUrl || !cfg.apiKey || !cfg.model) return log('请先填写模型配置（Base URL / Key / 模型名）', 'err');
+  if (!cfg.baseUrl || !cfg.apiKey || !cfg.model) return log('请先在右上角 ⚙ 设置中填写模型配置（Base URL / Key / 模型名）', 'err');
   if (!cfg.requirement.trim()) return log('总要求为空', 'warn');
   setRunning(true, 'trial');
   try {
@@ -304,7 +390,7 @@ function showPreview(result, firstRow) {
     showModal('试跑结果', wrap, [{ label: '关闭', primary: true }]);
     return;
   }
-  wrap.appendChild(el('div', { class: 'hint', style: 'margin-bottom:8px' },
+  wrap.appendChild(el('div', { class: 'hint', style: 'margin-bottom:10px' },
     `模型返回 ${n} 个分点。将创建 ${n} 个「多行文本」列（可改列名）：`));
   const nameInputs = [];
   for (let i = 0; i < n; i++) {
@@ -316,14 +402,15 @@ function showPreview(result, firstRow) {
     ));
   }
   wrap.appendChild(el('div', { class: 'hint' }, `素材预览：${firstRow.text.slice(0, 100)}…`));
-  showModal('首行预览（不写回）', wrap, [
+  const m = showModal('首行预览（不写回）', wrap, [
     { label: '取消' },
     {
       label: '确认并开始批量生成', primary: true,
       onClick: async () => {
         const columnNames = nameInputs.map((inp) => inp.value.trim()).filter(Boolean);
-        document.querySelectorAll('.modal-overlay').forEach((m) => m.remove());
+        m.close();
         await onRun(columnNames);
+        return false;
       },
     },
   ]);
@@ -336,7 +423,7 @@ function makeDeps(cfg) {
     marker: cfg.marker,
     callModel: async (messages, { shouldAbort }) => callLLM(cfg, messages, {
       shouldAbort,
-      onRetry: (attempt, err, delay) => log(`模型请求第 ${attempt} 次重试（${err.message.slice(0, 80)}），${Math.round(delay / 1000)}s 后…`, 'warn'),
+      onRetry: (attempt, err, delay) => log(`模型请求第 ${attempt} 次重试（${err.message.slice(0, 80)}），${(delay / 1000).toFixed(0)}s 后…`, 'warn'),
     }),
     ensureColumns: (names) => ensureColumns(state.table, names),
     writeCells: (items, opts) => batchWriteCells({
@@ -357,14 +444,13 @@ function makeDeps(cfg) {
 async function onRun(presetColumns = null) {
   const cfg = collectCfg();
   if (!state.sourceFieldId) return log('请先选择源字段', 'warn');
-  if (!cfg.baseUrl || !cfg.apiKey || !cfg.model) return log('请先填写模型配置', 'err');
+  if (!cfg.baseUrl || !cfg.apiKey || !cfg.model) return log('请先在右上角 ⚙ 设置中填写模型配置', 'err');
   setRunning(true, 'run');
   state.aborted = false;
   state.t0 = Date.now();
-  $('progressBox').style.display = 'block';
+  $('progressBox').classList.add('show');
   let columns = presetColumns;
   try {
-    // 未经过试跑直接点「开始批量」：先用试跑确定列
     if (!columns) {
       const rows0 = await loadRows([]);
       const first = rows0.find((r) => r.text.trim());
@@ -445,13 +531,8 @@ function setRunning(running, mode) {
 
 /* ---------- 启动 ---------- */
 function bindCfgInputs() {
-  $('baseUrl').value = state.cfg.baseUrl || '';
-  $('apiKey').value = state.cfg.apiKey || '';
-  $('model').value = state.cfg.model || '';
-  $('llmConc').value = state.cfg.llmConc || 3;
   $('requirement').value = state.cfg.requirement || '';
-  $('marker').value = state.cfg.marker || '【1】';
-  $('skipFilled').value = state.cfg.skipFilled ? '1' : '0';
+  $('requirement').addEventListener('change', () => saveCfg({ requirement: $('requirement').value }));
 }
 
 async function init() {

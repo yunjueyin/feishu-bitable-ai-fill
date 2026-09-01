@@ -25,22 +25,57 @@ export function fillSelect(sel, options, placeholder) {
   }
 }
 
-/** 简易模态弹窗：返回 close() */
-export function showModal(title, contentNode, buttons = []) {
+/**
+ * 模态弹窗：返回 { close, overlay }。
+ * - 进入/退出均有动画（遮罩模糊淡入、卡片弹入）；点遮罩 / 按 Esc 可关（可被 options.dismissible=false 禁用）。
+ * - 按钮支持 { label, primary, danger, onClick, keepOpen }：
+ *   onClick 返回 false 时不自动关闭；否则点击后自动关闭（keepOpen:true 同效）。
+ */
+export function showModal(title, contentNode, buttons = [], options = {}) {
   const overlay = el('div', { class: 'modal-overlay' });
   const box = el('div', { class: 'modal-box' },
     el('div', { class: 'modal-title' }, title),
     el('div', { class: 'modal-body' }, contentNode),
     el('div', { class: 'modal-foot' },
       buttons.map((b) => el('button', {
-        class: b.primary ? 'btn btn-primary' : 'btn',
-        onclick: () => b.onClick && b.onClick(),
+        class: b.primary ? 'btn btn-primary' : (b.danger ? 'btn btn-danger' : 'btn'),
+        onclick: async () => {
+          if (b.onClick) {
+            const r = await b.onClick();
+            if (r === false) return; // 调用方自行决定何时关闭
+          }
+          if (b.keepOpen) return;
+          close();
+        },
       }, b.label)),
     ),
   );
   overlay.appendChild(box);
   document.body.appendChild(overlay);
-  return { close: () => overlay.remove(), overlay };
+
+  let closed = false;
+  function finish() {
+    if (closed) return;
+    closed = true;
+    document.removeEventListener('keydown', onKey);
+    overlay.remove();
+    options.onClose && options.onClose();
+  }
+  function close() {
+    if (closed) return;
+    overlay.classList.add('closing');
+    // 仅当退出动画（overlayOut）播完才移除，避免入场动画误触发
+    overlay.addEventListener('animationend', (e) => {
+      if (e.animationName === 'overlayOut') finish();
+    }, { once: true });
+    setTimeout(finish, 260); // 兜底
+  }
+  function onKey(e) { if (e.key === 'Escape') close(); }
+  if (options.dismissible !== false) {
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    document.addEventListener('keydown', onKey);
+  }
+  return { close, overlay };
 }
 
 /** 格式化 ETA 秒数为 mm:ss */
