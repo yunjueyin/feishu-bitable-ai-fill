@@ -75,7 +75,8 @@ export async function runBatch(deps, p) {
     return true;
   });
   if (!workRows.length) {
-    onProgress(0, 0, 'done');
+    // 全部被「跳过已有内容」跳过：显示 N/N 已完成（而非 0/0），调用方据 result.skipped 弹提示
+    onProgress(result.skipped, result.skipped, 'done');
     return result;
   }
 

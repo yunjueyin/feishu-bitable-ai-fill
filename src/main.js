@@ -15,7 +15,7 @@ import {
 } from './feishu.js';
 import { trialRun, runBatch, retryFailed, batchWriteCells } from './runner.js';
 
-export const APP_VERSION = '20260901f';
+export const APP_VERSION = '20260901g';
 
 const state = {
   cfg: loadCfg(),
@@ -896,7 +896,11 @@ async function onRun(presetColumns = null) {
     if (result.aborted) {
       log('已取消：生成/写回中止，已完成内容保留', 'warn');
     } else {
-      log(`完成：写回 ${result.written} 格，跳过 ${result.skipped} 行，失败 ${result.failed.length} 项，分点超列截断 ${result.truncated} 行，不足留空 ${result.lessFilled} 行`, 'ok');
+      log(`完成：写回 ${result.written} 格，跳过 ${result.skipped} 行，失败 ${result.failed.length} 项，分点超列截断 ${result.truncated} 行，不足留空 ${result.lessFilled} 行`, result.skipped && !result.written ? 'warn' : 'ok');
+    }
+    // 全部行被「跳过已有内容」跳过：醒目弹窗说明原因与解决方法（而非静默"完成"让用户困惑）
+    if (!result.aborted && !result.fatal && result.skipped > 0 && result.skipped === rows.length) {
+      showError('所有行都被跳过了', `共 ${rows.length} 行全部因「跳过「输出1」已有内容的行」被跳过——这些行的第一个输出列已有内容（通常是之前生成过的残留）。\n\n如需重新生成，二选一：\n① 在「分列设置 → 运行范围」改为「覆盖全部行」；\n② 或先清空这些行的输出列内容再跑。`);
     }
     if (result.fatal) showError('建列失败', result.fatal);
     if (result.failed.length) {

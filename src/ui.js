@@ -32,6 +32,12 @@ export function fillSelect(sel, options, placeholder) {
  *   onClick 返回 false 时不自动关闭；否则点击后自动关闭（keepOpen:true 同效）。
  */
 export function showModal(title, contentNode, buttons = [], options = {}) {
+  // 互斥：同一时间只保留一个弹窗。
+  // 【根修】此前 openSettings() 切换服务商时直接重新 showModal，旧 overlay 未移除，
+  // DOM 中出现两个 #setProvider —— $('setProvider') 命中旧的（Agnes）下拉，
+  // 点「完成」时 verifyCurrentModel 把 Agnes 配置覆盖回 localStorage，
+  // 用户刚保存的「自定义」配置被吞。清理旧 overlay 后 $('id') 必然命中当前弹窗。
+  document.querySelectorAll('.modal-overlay').forEach((ov) => ov.remove());
   const overlay = el('div', { class: 'modal-overlay' });
   const box = el('div', { class: 'modal-box' },
     el('div', { class: 'modal-title' }, title),
