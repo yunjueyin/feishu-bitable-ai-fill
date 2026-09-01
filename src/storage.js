@@ -7,11 +7,44 @@
 export const CFG_KEY = 'feishu_ai_fill_cfg_v1';
 export const CFG_VERSION = 1;
 
+/**
+ * 服务商预设。用户只需「选服务商 → 选模型 → 填 API Key」。
+ * 固定 Base URL 的服务商（fixedBaseUrl=true）会锁定 Base URL，用户不必填写。
+ * 数据均来自官方文档：https://agnes-ai.cn/zh-Hans/docs/agnes-25-flash 、 /agnes-25-pro
+ */
+export const PROVIDERS = [
+  {
+    id: 'agnes',
+    name: 'Agnes AI（agnes-ai.cn）',
+    baseUrl: 'https://api.agnes-ai.cn/v1',
+    fixedBaseUrl: true,
+    docUrl: 'https://agnes-ai.cn/zh-Hans/docs/agnes-25-flash',
+    models: [
+      { value: 'agnes-2.5-flash', label: '2.5 Flash（默认 · 快速高性价比 · 512K）' },
+      { value: 'agnes-2.5-pro', label: '2.5 Pro（强推理 · 付费 · 1M）' },
+    ],
+    defaultModel: 'agnes-2.5-flash',
+  },
+  {
+    id: 'custom',
+    name: '自定义（OpenAI 兼容）',
+    baseUrl: '',
+    fixedBaseUrl: false,
+    models: [],
+    defaultModel: '',
+  },
+];
+export const DEFAULT_PROVIDER = 'agnes';
+export function getProvider(id) {
+  return PROVIDERS.find((p) => p.id === id) || PROVIDERS[PROVIDERS.length - 1];
+}
+
 const DEFAULT_CFG = {
   version: CFG_VERSION,
-  baseUrl: '',
+  provider: DEFAULT_PROVIDER,                       // 当前服务商（agnes / custom）
+  baseUrl: 'https://api.agnes-ai.cn/v1',            // 默认 Agnes AI
   apiKey: '',
-  model: '',
+  model: 'agnes-2.5-flash',                         // 默认 2.5 Flash（文本/文生文）
   splitMode: 'marker',       // marker / paragraph / blank / heading
   marker: '【1】',
   sep: '---',                // 段落分隔符（paragraph 模式）
@@ -25,15 +58,20 @@ const DEFAULT_CFG = {
 };
 
 export function loadCfg() {
+  let raw = null;
   try {
-    const raw = localStorage.getItem(CFG_KEY);
-    if (!raw) return { ...DEFAULT_CFG };
-    const obj = JSON.parse(raw);
-    if (!obj || obj.version !== CFG_VERSION) return { ...DEFAULT_CFG };
-    return { ...DEFAULT_CFG, ...obj };
-  } catch (e) {
-    return { ...DEFAULT_CFG };
-  }
+    const r = localStorage.getItem(CFG_KEY);
+    if (r) raw = JSON.parse(r);
+  } catch (e) { raw = null; }
+  if (!raw) return { ...DEFAULT_CFG }; // 全新用户：直接用默认（Agnes AI + 2.5 Flash）
+  if (raw.version !== CFG_VERSION) return { ...DEFAULT_CFG };
+  const base = { ...DEFAULT_CFG, ...raw };
+  // 旧版数据无 provider 字段 → 有 baseUrl 视为自定义，否则用默认服务商
+  const hadProvider = Object.prototype.hasOwnProperty.call(raw, 'provider');
+  if (!hadProvider) base.provider = base.baseUrl ? 'custom' : DEFAULT_PROVIDER;
+  const p = getProvider(base.provider);
+  if (p.fixedBaseUrl) base.baseUrl = p.baseUrl; // 固定 Base URL 强制对齐，避免手动改坏
+  return base;
 }
 
 export function saveCfg(cfg) {

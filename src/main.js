@@ -5,6 +5,7 @@ import { el, fillSelect, showModal, fmtEta } from './ui.js';
 import {
   loadCfg, saveCfg, EXPORT_FORMATS,
   exportRequirement, importRequirementFile, getImportAccept,
+  PROVIDERS, getProvider,
 } from './storage.js';
 import { callLLM, verifyModel } from './llm.js';
 import { cellToText, SPLIT_MODES } from './parser.js';
@@ -281,19 +282,55 @@ function openSettings() {
   const cfg = loadCfg();
   const content = el('div', {});
 
-  // 分组：模型配置
+  // 分组：模型配置（服务商 → 模型 → API Key）
+  const p = getProvider(cfg.provider);
   const gModel = el('div', { class: 'set-group' },
-    el('div', { class: 'set-group-title' }, '模型配置（OpenAI 兼容，仅存本浏览器）'),
+    el('div', { class: 'set-group-title' }, '模型配置（仅存本浏览器）'),
     el('div', { class: 'set-grid' },
-      liveField({ label: 'Base URL', value: cfg.baseUrl, placeholder: 'https://api.deepseek.com', key: 'baseUrl', full: true }),
+      // 服务商
+      (() => {
+        const s = el('select', {},
+          ...PROVIDERS.map((pr) => el('option', { value: pr.id }, pr.name)));
+        s.value = p.id;
+        s.addEventListener('change', () => {
+          const np = getProvider(s.value);
+          const patch = { provider: np.id };
+          if (np.fixedBaseUrl) { patch.baseUrl = np.baseUrl; patch.model = np.defaultModel; }
+          saveCfg(patch);
+          openSettings(); // 服务商切换后重渲染，刷新模型下拉与 Base URL 显示
+        });
+        return el('div', { class: 'form-field full' },
+          el('div', { class: 'form-label' }, '服务商'), s);
+      })(),
+      // Base URL：固定服务商只读显示，自定义才允许填写
+      p.fixedBaseUrl
+        ? el('div', { class: 'form-field full' },
+            el('div', { class: 'form-label' }, 'Base URL（由服务商固定）'),
+            el('input', { type: 'text', value: p.baseUrl, disabled: true, style: 'background:#f5f6f8;color:var(--muted)' }))
+        : liveField({ label: 'Base URL', value: cfg.baseUrl, placeholder: 'https://api.deepseek.com', key: 'baseUrl', full: true }),
+      // 模型：预设服务商用下拉，自定义自由输入
+      (p.models && p.models.length)
+        ? (() => {
+            const cur = cfg.model && p.models.some((m) => m.value === cfg.model) ? cfg.model : p.models[0].value;
+            const s = el('select', {}, ...p.models.map((m) => el('option', { value: m.value }, m.label)));
+            s.value = cur;
+            bindLive(s, 'model');
+            return el('div', { class: 'form-field full' },
+              el('div', { class: 'form-label' }, '模型（默认 2.5 Flash）'), s);
+          })()
+        : liveField({ label: '模型名', value: cfg.model, placeholder: 'deepseek-chat', key: 'model', full: true }),
+      // API Key
       liveField({ label: 'API Key', type: 'password', value: cfg.apiKey, placeholder: 'sk-…', key: 'apiKey', full: true }),
-      liveField({ label: '模型名', value: cfg.model, placeholder: 'deepseek-chat', key: 'model' }),
+      // 并发
       liveField({ label: '并发数（1–8）', value: cfg.llmConc || 3, key: 'llmConc', isNum: true }),
     ),
     el('div', { class: 'field-row', style: 'margin-top:10px' },
       el('button', { class: 'btn', onclick: onVerifyClick }, '验证模型配置'),
     ),
-    el('div', { class: 'set-tip' }, '点击「验证」或「完成」会自动用该配置发一次最小请求，校验地址 / 密钥 / 模型是否可用；Key 明文存于浏览器 localStorage，不会上传，勿在公共设备保存。'),
+    el('div', { class: 'set-tip' },
+      p.fixedBaseUrl
+        ? `已选「${p.name}」：在 Agnes AI 控制台获取 API Key 后粘贴、并选择模型即可（默认 2.5 Flash）。点击「验证」或「完成」会自动发一次最小请求校验配置；Key 明文存于浏览器 localStorage，不会上传，勿在公共设备保存。`
+        : '选好服务商后，填写 Base URL / API Key / 模型名即可。点击「验证」或「完成」会自动发一次最小请求校验配置；Key 明文存于浏览器 localStorage，不会上传。'),
   );
 
   // 分组：总要求模板（仅存/删；导入导出在主界面总要求面板）
