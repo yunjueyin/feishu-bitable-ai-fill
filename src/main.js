@@ -156,7 +156,7 @@ function render() {
       el('button', { class: 'btn', id: 'btnRetry', onclick: onRetryFailed, disabled: true }, '重跑失败项'),
       el('button', { class: 'btn btn-danger', id: 'btnCancel', onclick: onCancelClick, disabled: true }, '取消'),
     ),
-    el('button', { class: 'btn btn-primary btn-block', id: 'btnRun', onclick: onRun, disabled: true }, '开始批量生成'),
+    el('button', { class: 'btn btn-primary btn-block', id: 'btnRun', onclick: () => onRun(), disabled: true }, '开始批量生成'),
     el('div', { class: 'hint-block' }, '先试跑首行确认分点结构，再批量。新列将自动创建为「多行文本」，默认追加在表尾（飞书暂不支持 API 指定列位置，可手动拖动列序）。'),
     el('div', { class: 'progress-wrap', id: 'progressBox' },
       el('div', { class: 'progress-track' }, el('div', { class: 'progress-bar', id: 'progressBar' })),
@@ -646,8 +646,14 @@ async function loadRows(columnNames = []) {
   const records = await readRecords(state.table, state.viewId);
   if (!Array.isArray(records)) throw new Error(`读取记录返回非数组：${typeof records}`);
   if (!Array.isArray(state.fields)) throw new Error('字段列表异常，请重新点击「刷新表/字段」');
+  // 兜底防御：columnNames 非数组时降级为空数组并 log warn，
+  // 而不是 throw "输出列名不是数组" 让批量弹窗直接失败。
+  // （已在 onRun 中校验调用方传入的是数组；此处再做一层防意外。）
+  if (!Array.isArray(columnNames)) {
+    log(`loadRows 收到非数组 columnNames（${typeof columnNames}），降级为空数组`, 'warn');
+    columnNames = [];
+  }
   const outIdByName = new Map(state.fields.map((f) => [f.name, f.id]));
-  if (!Array.isArray(columnNames)) throw new Error('输出列名不是数组');
   return records.map((rec) => {
     const text = cellToText(rec.fields && rec.fields[state.sourceFieldId]);
     const existing = columnNames.map((name) => {
@@ -786,6 +792,10 @@ function makeDeps(cfg) {
 }
 
 async function onRun(presetColumns = null) {
+  // 防御：若被当作事件处理器直接 addEventListener（onclick: onRun），
+  // 浏览器会注入 Event 对象作为第一参数；Event 对象是 truthy 且非数组，
+  // 会导致下面 `if (!columns)` 误判并跳过 columns 计算，进而让 loadRows 报错。
+  if (presetColumns != null && !Array.isArray(presetColumns)) presetColumns = null;
   if (!state.sourceFieldId) {
     showError('缺少数据源', '请先选择「源字段」（每行素材所在列）。');
     return;
