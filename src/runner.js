@@ -79,7 +79,25 @@ export async function runBatch(deps, p) {
     return result;
   }
 
-  // 1) 并发生成
+  // 1)【先建列】纯飞书 API，不依赖 AI。
+  //    建列排在生成之前，用户点「开始批量生成」后立刻能在表里看到新列；
+  //    若 AI 响应慢/超时，列已就绪，进度只会停在「生成中」而不会连列都没有。
+  onProgress(0, workRows.length, 'build_columns');
+  let ensured;
+  try {
+    ensured = await deps.ensureColumns(columnNames);
+  } catch (e) {
+    return { ...result, failed: [], fatal: String(e && e.message || e), aborted: false };
+  }
+  if (!ensured || !Array.isArray(ensured.fieldIds)) {
+    return { ...result, failed: [], fatal: `建列返回异常：${JSON.stringify(ensured)}`, aborted: false };
+  }
+  if (ensured.warnings && deps.onWarn) ensured.warnings.forEach((w) => deps.onWarn(null, [w]));
+  const nameToId = new Map(ensured.fieldIds.map((fid, i) => [columnNames[i], fid]));
+  // 被跳过的列（重名类型不符）没有 id，对应内容改为失败
+  const skippedNames = new Set((ensured.skipped || []).map((s) => s.name));
+
+  // 2) 并发生成（AI）
   const cellItems = []; // 待写回
   const failedRows = [];
   let done = 0;
@@ -111,7 +129,14 @@ export async function runBatch(deps, p) {
           if (parsed.segments.length < N) result.lessFilled++;
           columnNames.forEach((colName, j) => {
             const seg = parsed.segments[j];
-            if (seg) cellItems.push({ recordId: row.recordId, cell: { fieldId: null, columnName: colName, text: seg } });
+            if (!seg) return;
+            // 建列已在生成前完成 → 直接取 fieldId；被跳过的列（类型不符）记为失败
+            if (skippedNames.has(colName)) {
+              failedRows.push({ recordId: row.recordId, error: `列「${colName}」不可用（类型不符）` });
+              return;
+            }
+            const fid = nameToId.get(colName);
+            if (fid) cellItems.push({ recordId: row.recordId, cell: { fieldId: fid, columnName: colName, text: seg } });
           });
         }
         if (parsed.warnings.length && deps.onWarn) deps.onWarn(row.recordId, parsed.warnings);
@@ -127,31 +152,8 @@ export async function runBatch(deps, p) {
 
   if (shouldAbort()) return { ...result, failed: failedRows, aborted: true };
 
-  // 2) 建列 + 绑定 fieldId
-  onProgress(done, total, 'build_columns'); // 进入"建列"阶段（建列耗时约 2s + N×sleep）
-  let ensured;
-  try {
-    ensured = await deps.ensureColumns(columnNames);
-  } catch (e) {
-    return { ...result, failed: failedRows, fatal: String(e && e.message || e), aborted: false };
-  }
-  if (!ensured || !Array.isArray(ensured.fieldIds)) {
-    return { ...result, failed: failedRows, fatal: `建列返回异常：${JSON.stringify(ensured)}`, aborted: false };
-  }
-  if (ensured.warnings && deps.onWarn) ensured.warnings.forEach((w) => deps.onWarn(null, [w]));
-  const nameToId = new Map(ensured.fieldIds.map((fid, i) => [columnNames[i], fid]));
-  // 被跳过的列（重名类型不符）没有 id，对应内容改为失败
-  const skippedNames = new Set((ensured.skipped || []).map((s) => s.name));
-  for (const it of cellItems) {
-    if (skippedNames.has(it.cell.columnName)) {
-      failedRows.push({ recordId: it.recordId, error: `列「${it.cell.columnName}」不可用（类型不符）` });
-    } else {
-      it.cell.fieldId = nameToId.get(it.cell.columnName);
-    }
-  }
+  // 3) 写回（建列已在步骤 1) 完成，cellItems 里 fieldId 已绑定，此处只过滤可写项）
   const writable = cellItems.filter((it) => it.cell.fieldId);
-
-  // 3) 写回
   if (writable.length && !shouldAbort()) {
     onProgress(0, writable.length, 'write'); // 进入"写回"阶段（重置计数器，用"writable/total"显示写回进度）
     const wr = await deps.writeCells(writable, {

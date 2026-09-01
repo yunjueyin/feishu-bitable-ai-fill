@@ -14,11 +14,12 @@
 
 export const DEFAULT_MARKER = '【1】';
 
+/** 分列方式（下拉选项直接用「分段符 / 换行符」等直观字眼，降低理解成本） */
 export const SPLIT_MODES = {
   marker: '序号标记（如【1】【2】）',
-  paragraph: '段落分隔符（如 ---）',
-  blank: '空行分列',
-  heading: 'Markdown 标题（如 ## 小标题）',
+  paragraph: '分段符（如 --- 单独一行）',
+  blank: '换行符（空行分隔）',
+  heading: '标题符（如 ## 小标题）',
 };
 
 /** 把标记样式翻译成正则片段（匹配"标记开头"的位置） */

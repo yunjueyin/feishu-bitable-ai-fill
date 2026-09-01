@@ -207,7 +207,9 @@ function setProgress(done, total, phase) {
   const pct = total ? Math.round((done / total) * 100) : 0;
   $('progressBar').style.width = pct + '%';
   $('progressPct').textContent = pct + '%';
-  const stageMap = { init: '准备中', generate: '生成中', build_columns: '建列中', write: '写回中', done: '已完成' };
+  const stageMap = {
+    init: '准备中', trial: '试跑中', build_columns: '建列中', generate: '生成中', write: '写回中', done: '已完成',
+  };
   $('progressStage').textContent = stageMap[phase] || (phase === 'write' ? '写回中' : '生成中');
   $('progressCount').textContent = `${done}/${total}`;
   const elapsed = (Date.now() - state.t0) / 1000;
@@ -824,6 +826,9 @@ async function onRun(presetColumns = null) {
         const rows0 = await loadRows([]);
         const first = rows0.find((r) => r.text.trim());
         if (!first) throw new Error('源字段没有非空内容');
+        // 未填模板：需先试跑首行确定输出列数（仅 1 次 AI 调用），显式提示"试跑中"
+        setProgress(0, 1, 'trial');
+        log('未配置输出列模板：先试跑首行以确定输出列数…');
         const tr = await trialRun(makeDeps(cfg), first.text);
         if (!tr.segments.length) throw new Error('首行解析出 0 个分点，请先调整要求（试跑预览可查看模型原始输出）');
         columns = tr.segments.map((_, i) => `输出${i + 1}`);
