@@ -1,7 +1,9 @@
 /**
  * 飞书多维表 SDK 封装。
- * 关键经验（来自【6.0】多维图片一键到excel 实测 + 官方文档查证）：
- * - 分页读记录必须带 viewId，否则返回底层存储顺序（行序错乱）；
+ * 关键经验（来自【6.0】多维图片一键到excel 实测 + 官方文档查证 + 本插件 Widget 运行时排错）：
+ * - 本插件运行于飞书 Base【自定义组件（Widget）】环境，其宿主 `getRecordsByPage` 传入 viewId 会直接以
+ *   Table 级 `code:12` 拒绝（SDK 再包成 7 位数 code + "getRecordsByPage error"）。故记录读取【不传 viewId】，
+ *   行序按底层存储顺序返回（该环境视图排序不可用，与此前 iframe/自动化插件"必须带 viewId 保序"不同）。
  * - getRecordIdList 已废弃且无序，一律用 getRecordsByPage；
  * - addField 返回形态需归一化（官方文档 Promise<string>，宿主实测兼容多种形态）；
  * - 建列后索引生效需约 2s，立即写入会静默失败；
@@ -87,49 +89,31 @@ export function describeErr(e) {
 
 /**
  * 分页读记录（stringValue:true 直接拿字符串）。
- * 优先带 viewId 保序；若宿主报 viewId 相关错误，自动回退到不带 viewId 重试一次，
- * 避免「视图无效/越界」导致整流程卡死（回退后按底层存储顺序，会打 warn 日志）。
+ * 【重要】本插件运行于飞书 Base【自定义组件（Widget）】环境，宿主 `getRecordsByPage` 传入 viewId
+ * 会直接以 Table 级 `code:12` 拒绝（SDK 再包成 7 位数 code + "getRecordsByPage error"）。
+ * 因此这里【绝不传 viewId】，统一按底层存储顺序分页读取，避免每次必现的 code:12 与噪声重试日志。
+ * （与此前 iframe/自动化插件"必须带 viewId 保序"不同——Widget 运行时视图排序不可用。）
+ * @param {ITable} table
+ * @param {string} [viewId] 仅保留形参以兼容调用方，本函数内部忽略（Widget 运行时传了会报错）。
  * @returns {Promise<Array<{recordId:string, fields:Object}>>}
  */
-export async function readRecords(table, viewId, { pageSize = 200, maxPages = 2000, onWarn = null } = {}) {
+export async function readRecords(table, viewId, { pageSize = 200, maxPages = 2000 } = {}) {
   if (!table) throw new Error('数据表未加载，请先在「数据源」面板点击「刷新表/字段」');
   const all = [];
-  let useView = !!viewId;
-  let attempt = 0;
-  while (attempt < 2) {
-    let pageToken;
-    let page = 0;
-    let hasMore = true;
-    let ok = true;
-    try {
-      do {
-        const params = { pageSize, stringValue: true };
-        if (pageToken) params.pageToken = pageToken;
-        if (useView) params.viewId = viewId;
-        const resp = await table.getRecordsByPage(params);
-        const recs = (resp && resp.records) || [];
-        all.push(...recs);
-        hasMore = !!(resp && resp.hasMore);
-        pageToken = resp && resp.pageToken;
-        page++;
-        if (page > maxPages) break; // 安全熔断
-      } while (hasMore && pageToken);
-    } catch (e) {
-      ok = false;
-      if (useView) {
-        // 多数「viewId 无效/越界」（来自其它表或已删除视图）会让 getRecordsByPage 报 Table 级错误，
-        // 回退到不带 viewId 重试一次（按底层存储顺序），避免整流程卡死。
-        const warnMsg = `带 viewId 读取记录失败（${describeErr(e)}），自动回退不带 viewId 重试`;
-        if (typeof onWarn === 'function') onWarn(warnMsg);
-        else console.warn(warnMsg);
-        useView = false;
-        attempt++;
-        continue;
-      }
-      throw e;
-    }
-    if (ok) break;
-  }
+  let pageToken;
+  let page = 0;
+  let hasMore = true;
+  do {
+    const params = { pageSize, stringValue: true };
+    if (pageToken) params.pageToken = pageToken;
+    const resp = await table.getRecordsByPage(params);
+    const recs = (resp && resp.records) || [];
+    all.push(...recs);
+    hasMore = !!(resp && resp.hasMore);
+    pageToken = resp && resp.pageToken;
+    page++;
+    if (page > maxPages) break; // 安全熔断
+  } while (hasMore && pageToken);
   return all;
 }
 
