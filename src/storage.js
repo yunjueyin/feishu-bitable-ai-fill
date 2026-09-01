@@ -63,7 +63,7 @@ export function parseImport(text) {
 export const EXPORT_FORMATS = [
   { value: 'json', label: 'JSON（完整配置）', ext: 'json', mime: 'application/json' },
   { value: 'txt', label: 'TXT 纯文本', ext: 'txt', mime: 'text/plain' },
-  { value: 'md', label: 'Markdown', ext: 'md', mime: 'text/markdown' },
+  { value: 'md', label: 'Markdown (.md)', ext: 'md', mime: 'text/markdown' },
   { value: 'html', label: 'HTML 网页', ext: 'html', mime: 'text/html' },
   { value: 'doc', label: 'Word 97-2003 (.doc)', ext: 'doc', mime: 'application/msword' },
   { value: 'docx', label: 'Word (.docx)', ext: 'docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
