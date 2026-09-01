@@ -207,7 +207,8 @@ function setProgress(done, total, phase) {
   const pct = total ? Math.round((done / total) * 100) : 0;
   $('progressBar').style.width = pct + '%';
   $('progressPct').textContent = pct + '%';
-  $('progressStage').textContent = phase === 'write' ? '写回中' : '生成中';
+  const stageMap = { init: '准备中', generate: '生成中', build_columns: '建列中', write: '写回中', done: '已完成' };
+  $('progressStage').textContent = stageMap[phase] || (phase === 'write' ? '写回中' : '生成中');
   $('progressCount').textContent = `${done}/${total}`;
   const elapsed = (Date.now() - state.t0) / 1000;
   const eta = done > 0 ? (elapsed / done) * (total - done) : NaN;
@@ -834,6 +835,8 @@ async function onRun(presetColumns = null) {
     state.lastRows = rows;
     const effConc = getEffectiveConc(cfg);
     log(`开始批量：共 ${rows.length} 行，输出列 [${columns.join(', ')}]，并发 ${effConc}${cfg.skipFilled ? '，跳过已有内容' : ''}`);
+    // 立刻初始化进度条（避免一直停在 HTML 默认的 0/0）。runBatch 内会按阶段更新。
+    setProgress(0, rows.length, 'init');
     const deps = makeDeps(cfg);
     const result = await runBatch(deps, {
       rows, columnNames: columns, llmConc: effConc, skipFilled: cfg.skipFilled,

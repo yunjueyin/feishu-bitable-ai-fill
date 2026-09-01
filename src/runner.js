@@ -74,13 +74,17 @@ export async function runBatch(deps, p) {
     }
     return true;
   });
-  if (!workRows.length) return result;
+  if (!workRows.length) {
+    onProgress(0, 0, 'done');
+    return result;
+  }
 
   // 1) 并发生成
   const cellItems = []; // 待写回
   const failedRows = [];
   let done = 0;
   const total = workRows.length;
+  onProgress(0, total, 'generate'); // 进入"生成"阶段（即便第一次 LLM 调用稍慢，UI 也能立刻看到 0/N）
 
   await mapWithConcurrency(
     workRows,
@@ -124,6 +128,7 @@ export async function runBatch(deps, p) {
   if (shouldAbort()) return { ...result, failed: failedRows, aborted: true };
 
   // 2) 建列 + 绑定 fieldId
+  onProgress(done, total, 'build_columns'); // 进入"建列"阶段（建列耗时约 2s + N×sleep）
   let ensured;
   try {
     ensured = await deps.ensureColumns(columnNames);
@@ -148,6 +153,7 @@ export async function runBatch(deps, p) {
 
   // 3) 写回
   if (writable.length && !shouldAbort()) {
+    onProgress(0, writable.length, 'write'); // 进入"写回"阶段（重置计数器，用"writable/total"显示写回进度）
     const wr = await deps.writeCells(writable, {
       shouldAbort,
       onBatchDone: (d, t) => onProgress(d, t, 'write'),
@@ -159,6 +165,7 @@ export async function runBatch(deps, p) {
   // 写回成功条数 = 可写条数 - 写回失败条数（failed 中去掉生成阶段失败：空素材/0分点/列不可用）
   const generateFail = (f) => /源字段内容为空|解析出 0 个分点|不可用/.test(f.error || '');
   result.written = writable.length - failedRows.filter((f) => !generateFail(f)).length;
+  onProgress(done, total, 'done'); // 全部完成
   return result;
 }
 
