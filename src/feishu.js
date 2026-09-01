@@ -74,26 +74,60 @@ export async function loadViewFields(table) {
 }
 
 /**
- * 分页读记录（强制 viewId 保序，stringValue:true 直接拿字符串）。
+ * 把 SDK/宿主抛出的错误整理成可读字符串（含原始 code/msg，便于定位）。
+ */
+export function describeErr(e) {
+  if (!e) return '未知错误';
+  if (typeof e === 'string') return e;
+  const code = e.code !== undefined ? e.code : (e.Code !== undefined ? e.Code : '');
+  const msg = e.msg || e.message || '';
+  if (code !== '' && code !== undefined) return `code: ${code}${msg ? '，msg: ' + msg : ''}`;
+  return msg || JSON.stringify(e);
+}
+
+/**
+ * 分页读记录（stringValue:true 直接拿字符串）。
+ * 优先带 viewId 保序；若宿主报 viewId 相关错误，自动回退到不带 viewId 重试一次，
+ * 避免「视图无效/越界」导致整流程卡死（回退后按底层存储顺序，会打 warn 日志）。
  * @returns {Promise<Array<{recordId:string, fields:Object}>>}
  */
 export async function readRecords(table, viewId, { pageSize = 200, maxPages = 2000 } = {}) {
+  if (!table) throw new Error('数据表未加载，请先在「数据源」面板点击「刷新表/字段」');
   const all = [];
-  let pageToken;
-  let page = 0;
-  let hasMore = true;
-  do {
-    const params = { pageSize, stringValue: true };
-    if (pageToken) params.pageToken = pageToken;
-    if (viewId) params.viewId = viewId;
-    const resp = await table.getRecordsByPage(params);
-    const recs = (resp && resp.records) || [];
-    all.push(...recs);
-    hasMore = !!(resp && resp.hasMore);
-    pageToken = resp && resp.pageToken;
-    page++;
-    if (page > maxPages) break; // 安全熔断
-  } while (hasMore && pageToken);
+  let useView = !!viewId;
+  let attempt = 0;
+  while (attempt < 2) {
+    let pageToken;
+    let page = 0;
+    let hasMore = true;
+    let ok = true;
+    try {
+      do {
+        const params = { pageSize, stringValue: true };
+        if (pageToken) params.pageToken = pageToken;
+        if (useView) params.viewId = viewId;
+        const resp = await table.getRecordsByPage(params);
+        const recs = (resp && resp.records) || [];
+        all.push(...recs);
+        hasMore = !!(resp && resp.hasMore);
+        pageToken = resp && resp.pageToken;
+        page++;
+        if (page > maxPages) break; // 安全熔断
+      } while (hasMore && pageToken);
+    } catch (e) {
+      ok = false;
+      if (useView) {
+        // 多数「viewId 无效/越界」（来自其它表或已删除视图）会让 getRecordsByPage 报 Table 级错误，
+        // 回退到不带 viewId 重试一次（按底层存储顺序），避免整流程卡死。
+        log(`带 viewId 读取记录失败（${describeErr(e)}），自动回退不带 viewId 重试`, 'warn');
+        useView = false;
+        attempt++;
+        continue;
+      }
+      throw e;
+    }
+    if (ok) break;
+  }
   return all;
 }
 

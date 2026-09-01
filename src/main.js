@@ -10,7 +10,7 @@ import {
 import { callLLM, verifyModel } from './llm.js';
 import { cellToText, SPLIT_MODES } from './parser.js';
 import {
-  getTableById, loadViewFields, readRecords,
+  getTableById, loadViewFields, readRecords, describeErr,
   ensureColumns, writeTextCell, listTables, getActiveTable,
 } from './feishu.js';
 import { trialRun, runBatch, retryFailed, batchWriteCells } from './runner.js';
@@ -548,8 +548,8 @@ export async function reloadTable() {
       saveCfg({ sourceFieldId: sel.value });
     };
   } catch (e) {
-    $('tableInfo').textContent = '加载失败：' + e.message;
-    showError('表加载失败', e.message);
+    $('tableInfo').textContent = '加载失败：' + describeErr(e);
+    showError('表加载失败', describeErr(e));
   }
 }
 
@@ -589,6 +589,10 @@ async function onTrial() {
     showError('缺少数据源', '请先选择「源字段」（每行素材所在列）。');
     return;
   }
+  if (!state.table) {
+    showError('数据表未加载', '请先在「数据源」面板点击「刷新表/字段」。');
+    return;
+  }
   const cfg = ensureModelConfig();
   if (!cfg) return;
   if (!cfg.requirement.trim()) {
@@ -608,7 +612,7 @@ async function onTrial() {
     (result.warnings || []).forEach((w) => log(w, 'warn'));
     showPreview(result, first);
   } catch (e) {
-    showError('试跑失败', e.message);
+    showError('试跑失败', describeErr(e));
   } finally {
     setRunning(false);
   }
@@ -685,6 +689,10 @@ async function onRun(presetColumns = null) {
     showError('缺少数据源', '请先选择「源字段」（每行素材所在列）。');
     return;
   }
+  if (!state.table) {
+    showError('数据表未加载', '请先在「数据源」面板点击「刷新表/字段」。');
+    return;
+  }
   const cfg = ensureModelConfig();
   if (!cfg) return;
   setRunning(true, 'run');
@@ -724,7 +732,7 @@ async function onRun(presetColumns = null) {
       log('失败明细（前 20 条）：\n' + result.failed.slice(0, 20).map((f) => `  行 ${f.recordId}: ${f.error}`).join('\n'), 'err');
     }
   } catch (e) {
-    showError('批量执行失败', e.message);
+    showError('批量执行失败', describeErr(e));
   } finally {
     setRunning(false);
   }
@@ -754,7 +762,7 @@ async function onRetryFailed() {
     log(`重跑完成：写回 ${result.written} 格，仍失败 ${result.failed.length} 项`, result.failed.length ? 'warn' : 'ok');
     if (!result.failed.length) $('btnRetry').disabled = true;
   } catch (e) {
-    showError('重跑失败', e.message);
+    showError('重跑失败', describeErr(e));
   } finally {
     setRunning(false);
   }
