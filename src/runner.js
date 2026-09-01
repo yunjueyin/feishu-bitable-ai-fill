@@ -33,7 +33,7 @@ export async function mapWithConcurrency(items, limit, worker, onItem) {
  * @returns {{segments:string[], raw:string, strategy:string, warnings:string[]}}
  */
 export async function trialRun(deps, sourceText) {
-  const messages = buildMessages(deps.requirement, sourceText, deps.splitCfg);
+  const messages = buildMessages(deps.requirement, sourceText, deps.splitCfg, deps.outputColumns);
   const raw = await deps.callModel(messages, {});
   const parsed = parseSegments(raw, deps.splitCfg);
   return { ...parsed, raw };
@@ -86,7 +86,7 @@ export async function runBatch(deps, p) {
         return;
       }
       try {
-        const messages = buildMessages(deps.requirement, row.text, deps.splitCfg);
+        const messages = buildMessages(deps.requirement, row.text, deps.splitCfg, deps.outputColumns);
         const raw = await deps.callModel(messages, { shouldAbort });
         if (shouldAbort()) return;
         const parsed = parseSegments(raw, deps.splitCfg);

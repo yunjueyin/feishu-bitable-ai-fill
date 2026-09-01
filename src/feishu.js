@@ -7,13 +7,41 @@
  * - getRecordIdList 已废弃且无序，一律用 getRecordsByPage；
  * - addField 返回形态需归一化（官方文档 Promise<string>，宿主实测兼容多种形态）；
  * - 建列后索引生效需约 2s，立即写入会静默失败；
- * - 写多行文本：官方两处示例分别为字符串与富文本数组，writeTextCell 做双格式兜底。
+ * - 写多行文本：官方两处示例分别为字符串与富文本数组，writeTextCell 做双格式兜底；
+ * - Widget 宿主对 getFieldMetaList / getRecordsByPage 等接口的返回常做 { data: {...} } 包装，
+ *   与 TypeScript 声明的直接返回数组不一致，统一用 unwrapArray / unwrapRecordsResp 解包。
  */
 import { bitable } from '@lark-base-open/js-sdk';
 
 export const FIELD_TYPE_TEXT = 1; // 多行文本
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * 防御性数组解包：飞书 Widget 宿主有时会返回 { data: [...] } 或 { records: [...] } 包装对象，
+ * 而类型声明写的是直接返回数组。统一用本函数兜底，避免 .map 等数组方法在运行时崩溃。
+ */
+export function unwrapArray(v) {
+  if (Array.isArray(v)) return v;
+  if (!v || typeof v !== 'object') return [];
+  if (Array.isArray(v.data)) return v.data;
+  if (Array.isArray(v.records)) return v.records;
+  if (Array.isArray(v.list)) return v.list;
+  if (Array.isArray(v.result)) return v.result;
+  return [];
+}
+
+/** 解包 getRecordsByPage 响应：直接 / {data} / {data:{records,...}} 三种形态兼容 */
+export function unwrapRecordsResp(v) {
+  if (!v || typeof v !== 'object') return { records: [], hasMore: false, pageToken: null };
+  if (Array.isArray(v.records)) return { records: v.records, hasMore: !!v.hasMore, pageToken: v.pageToken || null };
+  const d = v.data;
+  if (d && typeof d === 'object') {
+    const recs = Array.isArray(d.records) ? d.records : (Array.isArray(d) ? d : []);
+    return { records: recs, hasMore: !!d.hasMore, pageToken: d.pageToken || null };
+  }
+  return { records: [], hasMore: false, pageToken: null };
+}
 
 /** 当前选中的 base/table 信息 */
 export async function getSelection() {
@@ -36,13 +64,13 @@ export async function getActiveTable() {
 /** 数据表列表（getTableMetaList 最可靠，getTableList 的 name 经常为空） */
 export async function listTables() {
   try {
-    const metas = await bitable.base.getTableMetaList();
-    if (Array.isArray(metas) && metas.length) {
+    const metas = unwrapArray(await bitable.base.getTableMetaList());
+    if (metas.length) {
       return metas.map((m) => ({ id: m.id, name: m.name || m.id }));
     }
   } catch (e) { /* 落入兜底 */ }
-  const tables = await bitable.base.getTableList();
-  return (tables || []).map((t) => ({ id: t.id, name: t.name || t.id }));
+  const tables = unwrapArray(await bitable.base.getTableList());
+  return tables.map((t) => ({ id: t.id, name: t.name || t.id }));
 }
 
 /**
@@ -54,14 +82,14 @@ export async function listTables() {
 export async function loadViewFields(table) {
   let viewId = null;
   try { viewId = await table.getActiveView(); } catch (e) { viewId = null; }
-  const metas = await table.getFieldMetaList(); // 无序全量（含类型）
+  const metas = unwrapArray(await table.getFieldMetaList()); // 无序全量（含类型）
   const metaById = new Map(metas.map((m) => [m.id, m]));
   let ordered = [];
   if (viewId) {
     try {
       const view = await table.getViewById(viewId);
-      const list = await view.getFieldMetaList(); // 有序：id 字符串或对象，双兼容
-      ordered = (list || [])
+      const list = unwrapArray(await view.getFieldMetaList()); // 有序：id 字符串或对象，双兼容
+      ordered = list
         .map((x) => (typeof x === 'string' ? metaById.get(x) : metaById.get(x && x.id)))
         .filter(Boolean);
     } catch (e) { ordered = []; }
@@ -106,11 +134,11 @@ export async function readRecords(table, viewId, { pageSize = 200, maxPages = 20
   do {
     const params = { pageSize, stringValue: true };
     if (pageToken) params.pageToken = pageToken;
-    const resp = await table.getRecordsByPage(params);
-    const recs = (resp && resp.records) || [];
+    const resp = unwrapRecordsResp(await table.getRecordsByPage(params));
+    const recs = resp.records;
     all.push(...recs);
-    hasMore = !!(resp && resp.hasMore);
-    pageToken = resp && resp.pageToken;
+    hasMore = resp.hasMore;
+    pageToken = resp.pageToken;
     page++;
     if (page > maxPages) break; // 安全熔断
   } while (hasMore && pageToken);
@@ -124,7 +152,7 @@ export async function readRecords(table, viewId, { pageSize = 200, maxPages = 20
  * @returns {Promise<{fieldIds: string[], created: string[], reused: string[], skipped: {name:string,type:number}[], warnings: string[]}>}
  */
 export async function ensureColumns(table, names) {
-  const metas = await table.getFieldMetaList();
+  const metas = unwrapArray(await table.getFieldMetaList());
   const byName = new Map(metas.map((m) => [m.name, m]));
   const fieldIds = [];
   const created = [];

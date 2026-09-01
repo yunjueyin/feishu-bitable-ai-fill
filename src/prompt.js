@@ -16,8 +16,9 @@ export const FORMAT_CONTRACT = [
 /**
  * 按分列模式生成格式契约。
  * @param {object} cfg { splitMode, marker, sep, headingLevel }
+ * @param {Array<{name:string, example?:string}>} outputColumns 显式输出列模板（可选）
  */
-export function formatContract(cfg = {}) {
+export function formatContract(cfg = {}, outputColumns = []) {
   const { splitMode = 'marker', marker = '【1】', sep = '---', headingLevel = '##' } = cfg;
   const head = '输出格式（必须严格遵守）：';
   const tail = [
@@ -25,10 +26,21 @@ export function formatContract(cfg = {}) {
     '- 不要使用 markdown 代码块包裹。',
   ];
 
+  const colLines = [];
+  if (Array.isArray(outputColumns) && outputColumns.length) {
+    colLines.push('');
+    colLines.push('输出列（必须按以下列名和顺序输出，不要额外列）：');
+    outputColumns.forEach((col, i) => {
+      const ex = String(col.example || '').trim();
+      colLines.push(`${i + 1}. 列名「${col.name || `输出${i + 1}`}」${ex ? '：参考案例如「' + ex + '」' : ''}`);
+    });
+  }
+
   if (splitMode === 'blank') {
     return [head,
       '- 每个分点单独一段，段与段之间用「一个空行」分隔；',
       ...tail,
+      ...colLines,
     ].join('\n');
   }
   if (splitMode === 'heading') {
@@ -37,6 +49,7 @@ export function formatContract(cfg = {}) {
       `- 每个分点以 Markdown 标题开头，固定用「${lv} 分点标题」形式，如 ${lv} 卖点、${lv} 场景；`,
       '- 标题之后紧跟该分点内容，分点内部可以换行；',
       ...tail,
+      ...colLines,
     ].join('\n');
   }
   if (splitMode === 'paragraph') {
@@ -45,6 +58,7 @@ export function formatContract(cfg = {}) {
       `- 每个分点单独一段，段与段之间用一行分隔符「${s}」隔开；`,
       '- 分隔符单独成行，前后不加其他文字；',
       ...tail,
+      ...colLines,
     ].join('\n');
   }
   // marker（默认）：根据当前标记样式生成
@@ -52,6 +66,7 @@ export function formatContract(cfg = {}) {
     `- 每个分点单独一段，以序号标记开头（形如【1】【2】【3】，具体样式以设置为准），依次编号；`,
     '- 标记后紧跟该分点内容，分点内部可以换行；',
     ...tail,
+    ...colLines,
   ].join('\n');
 }
 
@@ -60,14 +75,15 @@ export function formatContract(cfg = {}) {
  * @param {string} requirement 总要求文档（给 AI 的约束）
  * @param {string} sourceText 该行源字段素材原文
  * @param {object} splitCfg 分列配置 { splitMode, marker, sep, headingLevel }
+ * @param {Array<{name:string, example?:string}>} outputColumns 显式输出列模板（可选）
  * @returns {Array<{role:string, content:string}>}
  */
-export function buildMessages(requirement, sourceText, splitCfg = {}) {
+export function buildMessages(requirement, sourceText, splitCfg = {}, outputColumns = []) {
   const req = String(requirement || '').trim();
   const system = [
     req ? `以下是本次任务的总体要求：\n${req}` : '请根据用户提供的素材完成任务。',
     '',
-    formatContract(splitCfg),
+    formatContract(splitCfg, outputColumns),
   ].join('\n');
   return [
     { role: 'system', content: system },

@@ -15,7 +15,7 @@ import {
 } from './feishu.js';
 import { trialRun, runBatch, retryFailed, batchWriteCells } from './runner.js';
 
-export const APP_VERSION = '20260901c';
+export const APP_VERSION = '20260901d';
 
 const state = {
   cfg: loadCfg(),
@@ -91,10 +91,26 @@ function render() {
     ),
   ));
 
-  // ③ 分列设置（从设置弹窗移出，主界面显著展示）
+  // ③ 输出列模板
   app.appendChild(el('div', { class: 'panel', style: '--d:.15s' },
     el('div', { class: 'panel-head' },
       el('div', { class: 'panel-index' }, '3'),
+      el('div', { class: 'panel-title' }, '输出列模板'),
+      el('span', { class: 'panel-tag', id: 'outputColTag' }, '未定义'),
+    ),
+    el('div', { class: 'hint-block', style: 'margin-top:4px' },
+      '在此定义输出列名和每列的参考案例，AI 会严格按这些列生成内容；不填则按首次试跑结果自动建列。'),
+    el('div', { id: 'outputColList' }),
+    el('div', { class: 'field-row' },
+      el('button', { class: 'btn', id: 'btnAddOutputCol', onclick: addOutputColumn }, '+ 添加列'),
+      el('button', { class: 'btn', onclick: clearOutputColumns }, '清空'),
+    ),
+  ));
+
+  // ④ 分列设置（从设置弹窗移出，主界面显著展示）
+  app.appendChild(el('div', { class: 'panel', style: '--d:.18s' },
+    el('div', { class: 'panel-head' },
+      el('div', { class: 'panel-index' }, '4'),
       el('div', { class: 'panel-title' }, '分列设置'),
       el('span', { class: 'panel-tag', id: 'splitModeTag' }, '当前：序号标记'),
     ),
@@ -129,10 +145,10 @@ function render() {
     el('div', { class: 'hint-block', id: 'splitHint' }, ''),
   ));
 
-  // ④ 执行
-  app.appendChild(el('div', { class: 'panel', style: '--d:.19s' },
+  // ⑤ 执行
+  app.appendChild(el('div', { class: 'panel', style: '--d:.22s' },
     el('div', { class: 'panel-head' },
-      el('div', { class: 'panel-index' }, '4'),
+      el('div', { class: 'panel-index' }, '5'),
       el('div', { class: 'panel-title' }, '执行'),
     ),
     el('div', { class: 'field-row' },
@@ -282,6 +298,69 @@ function refreshSplitUI() {
     };
     hint.textContent = hints[mode] || '';
   }
+}
+
+/* ---------- 输出列模板 ---------- */
+function getOutputColumns() {
+  return Array.isArray(state.cfg.outputColumns) ? state.cfg.outputColumns : [];
+}
+
+function addOutputColumn() {
+  const cols = getOutputColumns();
+  cols.push({ name: `输出${cols.length + 1}`, example: '' });
+  state.cfg = saveCfg({ outputColumns: cols });
+  renderOutputColumns();
+}
+
+function removeOutputColumn(index) {
+  const cols = getOutputColumns();
+  if (index >= 0 && index < cols.length) {
+    cols.splice(index, 1);
+    state.cfg = saveCfg({ outputColumns: cols });
+  }
+  renderOutputColumns();
+}
+
+function updateOutputColumn(index, key, value) {
+  const cols = getOutputColumns();
+  if (index >= 0 && index < cols.length) {
+    cols[index] = { ...cols[index], [key]: value };
+    state.cfg = saveCfg({ outputColumns: cols });
+  }
+}
+
+function clearOutputColumns() {
+  if (confirm('确定清空所有输出列模板？清空后批量生成将按首次试跑结果自动建列。')) {
+    state.cfg = saveCfg({ outputColumns: [] });
+    renderOutputColumns();
+  }
+}
+
+function renderOutputColumns() {
+  const list = $('outputColList');
+  if (!list) return;
+  list.innerHTML = '';
+  const cols = getOutputColumns();
+  const tag = $('outputColTag');
+  if (tag) tag.textContent = cols.length ? `已定义 ${cols.length} 列` : '未定义';
+  if (!cols.length) {
+    list.appendChild(el('div', { class: 'hint', style: 'margin:8px 0' }, '暂无模板，点击「+ 添加列」定义输出列名和参考案例。'));
+    return;
+  }
+  const grid = el('div', { class: 'output-col-grid' });
+  cols.forEach((col, i) => {
+    const nameInp = el('input', { type: 'text', value: col.name || '', placeholder: `输出${i + 1}` });
+    nameInp.addEventListener('input', () => updateOutputColumn(i, 'name', nameInp.value));
+    const exInp = el('input', { type: 'text', value: col.example || '', placeholder: '该列的参考案例（可选）' });
+    exInp.addEventListener('input', () => updateOutputColumn(i, 'example', exInp.value));
+    grid.appendChild(el('div', { class: 'output-col-row' },
+      el('span', { class: 'output-col-index' }, `${i + 1}`),
+      el('div', { class: 'form-field' }, el('div', { class: 'form-label' }, '列名'), nameInp),
+      el('div', { class: 'form-field' }, el('div', { class: 'form-label' }, '参考案例（可选）'), exInp),
+      el('button', { class: 'btn btn-danger btn-sm', onclick: () => removeOutputColumn(i), title: '删除' }, '×'),
+    ));
+  });
+  list.appendChild(grid);
 }
 
 /* ---------- 设置弹窗（收纳次要配置） ---------- */
@@ -508,6 +587,7 @@ async function handleImportFile(file) {
         headingLevel: j.headingLevel || '##',
         skipFilled: j.skipFilled !== false,
         activeTemplate: j.activeTemplate || '',
+        outputColumns: Array.isArray(j.outputColumns) ? j.outputColumns : [],
       });
       state.cfg = loadCfg();
       $('requirement').value = state.cfg.requirement;
@@ -619,38 +699,34 @@ async function onTrial() {
 }
 
 function showPreview(result, firstRow) {
-  const n = result.segments.length;
+  const explicitCols = Array.isArray(state.cfg.outputColumns)
+    ? state.cfg.outputColumns.filter((c) => String(c.name || '').trim())
+    : [];
+  // 有模板时严格按模板列数/名称展示；无模板时按解析出的分点数
+  const displayNames = explicitCols.length
+    ? explicitCols.map((c) => c.name)
+    : result.segments.map((_, i) => `输出${i + 1}`);
+  const n = displayNames.length;
   const wrap = el('div', {});
   if (n === 0) {
-    wrap.appendChild(el('div', { class: 'err-text' }, '未解析出任何分点，请调整要求中的格式约定或分列设置。'));
+    wrap.appendChild(el('div', { class: 'err-text' }, '未解析出任何分点，请调整总要求、分列方式，或在「输出列模板」中定义输出列。'));
     wrap.appendChild(el('pre', { style: 'white-space:pre-wrap;font-size:12px;max-height:160px;overflow:auto;background:#fafbfc;padding:8px;border-radius:6px' }, result.raw.slice(0, 1500)));
     showModal('试跑结果', wrap, [{ label: '关闭', primary: true }]);
     return;
   }
   wrap.appendChild(el('div', { class: 'hint', style: 'margin-bottom:10px' },
-    `模型返回 ${n} 个分点（方式=${result.splitMode}）。将创建 ${n} 个「多行文本」列（可改列名）：`));
-  const nameInputs = [];
+    explicitCols.length
+      ? `已启用「输出列模板」共 ${n} 列。模型返回 ${result.segments.length} 个分点（方式=${result.splitMode}），将按模板列名写回。`
+      : `模型返回 ${result.segments.length} 个分点（方式=${result.splitMode}）。将创建 ${n} 个「多行文本」列：`));
   for (let i = 0; i < n; i++) {
-    const input = el('input', { type: 'text', value: `输出${i + 1}` });
-    nameInputs.push(input);
     wrap.appendChild(el('div', { class: 'seg-item' },
-      el('div', { class: 'seg-head' }, el('span', { class: 'badge' }, `分点 ${i + 1}`), input),
+      el('div', { class: 'seg-head' }, el('span', { class: 'badge' }, displayNames[i] || `分点 ${i + 1}`)),
       el('pre', {}, result.segments[i] || '（空）'),
     ));
   }
-  wrap.appendChild(el('div', { class: 'hint' }, `素材预览：${firstRow.text.slice(0, 100)}…`));
-  const m = showModal('首行预览（不写回）', wrap, [
-    { label: '取消' },
-    {
-      label: '确认并开始批量生成', primary: true,
-      onClick: async () => {
-        const columnNames = nameInputs.map((inp) => inp.value.trim()).filter(Boolean);
-        m.close();
-        await onRun(columnNames);
-        return false;
-      },
-    },
-  ]);
+  wrap.appendChild(el('div', { class: 'hint', style: 'margin-top:10px' },
+    `素材预览：${firstRow.text.slice(0, 100)}…（本窗口仅预览，关闭后请点击主界面「开始批量生成」）`));
+  showModal('首行预览（不写回）', wrap, [{ label: '关闭', primary: true }]);
 }
 
 /* ---------- 批量执行 ---------- */
@@ -661,9 +737,11 @@ function makeDeps(cfg) {
     sep: cfg.sep || '---',
     headingLevel: cfg.headingLevel || '##',
   };
+  const outputColumns = Array.isArray(cfg.outputColumns) ? cfg.outputColumns.filter((c) => String(c.name || '').trim()) : [];
   return {
     requirement: cfg.requirement,
     splitCfg,
+    outputColumns,
     callModel: async (messages, { shouldAbort }) => callLLM(cfg, messages, {
       shouldAbort,
       onRetry: (attempt, err, delay) => log(`模型请求第 ${attempt} 次重试（${err.message.slice(0, 80)}），${(delay / 1000).toFixed(0)}s 后…`, 'warn'),
@@ -701,14 +779,22 @@ async function onRun(presetColumns = null) {
   $('progressBox').classList.add('show');
   let columns = presetColumns;
   try {
+    const explicitCols = Array.isArray(cfg.outputColumns)
+      ? cfg.outputColumns.filter((c) => String(c.name || '').trim())
+      : [];
     if (!columns) {
-      const rows0 = await loadRows([]);
-      const first = rows0.find((r) => r.text.trim());
-      if (!first) throw new Error('源字段没有非空内容');
-      const tr = await trialRun(makeDeps(cfg), first.text);
-      if (!tr.segments.length) throw new Error('首行解析出 0 个分点，请先调整要求（试跑预览可查看模型原始输出）');
-      columns = tr.segments.map((_, i) => `输出${i + 1}`);
-      log(`未试跑，按首行解析结果自动建 ${columns.length} 列`, 'warn');
+      if (explicitCols.length) {
+        columns = explicitCols.map((c) => c.name);
+        log(`使用「输出列模板」共 ${columns.length} 列：[${columns.join(', ')}]`);
+      } else {
+        const rows0 = await loadRows([]);
+        const first = rows0.find((r) => r.text.trim());
+        if (!first) throw new Error('源字段没有非空内容');
+        const tr = await trialRun(makeDeps(cfg), first.text);
+        if (!tr.segments.length) throw new Error('首行解析出 0 个分点，请先调整要求（试跑预览可查看模型原始输出）');
+        columns = tr.segments.map((_, i) => `输出${i + 1}`);
+        log(`未配置输出列模板，按首行解析结果自动建 ${columns.length} 列`, 'warn');
+      }
     }
     state.lastColumns = columns;
     const rows = await loadRows(columns);
@@ -797,6 +883,7 @@ async function init() {
   bindCfgInputs();
   refreshTemplates();
   refreshSplitUI();
+  renderOutputColumns();
   $('tplSel').onchange = () => {
     const t = (state.cfg.templates || []).find((x) => x.name === $('tplSel').value);
     if (t) {

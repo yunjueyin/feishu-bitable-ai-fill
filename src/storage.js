@@ -54,6 +54,7 @@ const DEFAULT_CFG = {
   templates: [],             // 多套模板 [{name, text}]
   activeTemplate: '',        // 当前模板名
   skipFilled: true,          // 跳过输出列已有内容的行
+  outputColumns: [],         // 输出列模板 [{name, example}]，定义后严格按这些列名输出
   autoFill: null,            // 上次成功的建列结果缓存 {columns:[...], marker, sourceFieldId}
 };
 
