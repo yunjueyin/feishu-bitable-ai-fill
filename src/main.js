@@ -15,7 +15,7 @@ import {
 } from './feishu.js';
 import { trialRun, runBatch, retryFailed, batchWriteCells } from './runner.js';
 
-export const APP_VERSION = '20260901g';
+export const APP_VERSION = '20260901h';
 
 const state = {
   cfg: loadCfg(),
@@ -133,7 +133,7 @@ function render() {
         el('div', { class: 'form-label' }, '运行范围'),
         (() => {
           const s = el('select', { id: 'skipFilled' },
-            el('option', { value: '1' }, '跳过「输出1」已有内容的行'),
+            el('option', { value: '1' }, '跳过已填满的行（部分填充的行只补空列）'),
             el('option', { value: '0' }, '覆盖全部行'),
           );
           s.value = state.cfg.skipFilled ? '1' : '0';
@@ -883,7 +883,7 @@ async function onRun(presetColumns = null) {
     const rows = await loadRows(columns);
     state.lastRows = rows;
     const effConc = getEffectiveConc(cfg);
-    log(`开始批量：共 ${rows.length} 行，输出列 [${columns.join(', ')}]，并发 ${effConc}${cfg.skipFilled ? '，跳过已有内容' : ''}`);
+    log(`开始批量：共 ${rows.length} 行，输出列 [${columns.join(', ')}]，并发 ${effConc}${cfg.skipFilled ? '，跳过已填满的行' : ''}`);
     // 立刻初始化进度条（避免一直停在 HTML 默认的 0/0）。runBatch 内会按阶段更新。
     setProgress(0, rows.length, 'init');
     const deps = makeDeps(cfg);
@@ -900,7 +900,7 @@ async function onRun(presetColumns = null) {
     }
     // 全部行被「跳过已有内容」跳过：醒目弹窗说明原因与解决方法（而非静默"完成"让用户困惑）
     if (!result.aborted && !result.fatal && result.skipped > 0 && result.skipped === rows.length) {
-      showError('所有行都被跳过了', `共 ${rows.length} 行全部因「跳过「输出1」已有内容的行」被跳过——这些行的第一个输出列已有内容（通常是之前生成过的残留）。\n\n如需重新生成，二选一：\n① 在「分列设置 → 运行范围」改为「覆盖全部行」；\n② 或先清空这些行的输出列内容再跑。`);
+      showError('所有行都被跳过了', `共 ${rows.length} 行全部因「跳过已填满的行」被跳过——这些行的所有输出列都已有内容（通常是之前生成过的残留）。\n\n如需重新生成，二选一：\n① 在「分列设置 → 运行范围」改为「覆盖全部行」；\n② 或先清空这些行的输出列内容再跑（只清空部分列的话，会只补空列）。`);
     }
     if (result.fatal) showError('建列失败', result.fatal);
     if (result.failed.length) {

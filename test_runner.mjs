@@ -8,7 +8,7 @@ import {
 } from './src/parser.js';
 import { buildMessages, FORMAT_CONTRACT } from './src/prompt.js';
 import { callLLM, joinUrl } from './src/llm.js';
-import { runBatch, trialRun, retryFailed, batchWriteCells, mapWithConcurrency } from './src/runner.js';
+import { runBatch, trialRun, retryFailed, batchWriteCells, mapWithConcurrency, cleanSegment } from './src/runner.js';
 
 let passed = 0;
 const failures = [];
@@ -247,6 +247,39 @@ function makeDeps(over = {}) {
     columnNames: ['输出1'], llmConc: 1, skipFilled: true, shouldAbort: () => false, onProgress: () => {},
   });
   check('skipFilled 跳过已有内容行', r.skipped === 1 && deps._written.length === 1);
+}
+{
+  // 新语义：部分填充行不整行跳过——生成后只补空列，已有内容列不覆盖
+  const deps = makeDeps();
+  const r = await runBatch(deps, {
+    rows: [row('r1', 'a', ['已有', ''])],
+    columnNames: ['输出1', '输出2'], llmConc: 1, skipFilled: true, shouldAbort: () => false, onProgress: () => {},
+  });
+  check('部分填充行不跳过，只补空列', r.skipped === 0 && deps._written.length === 1
+    && deps._written[0].cell.columnName === '输出2');
+}
+{
+  const deps = makeDeps();
+  const r = await runBatch(deps, {
+    rows: [row('r1', 'a', ['已有', '已有'])],
+    columnNames: ['输出1', '输出2'], llmConc: 1, skipFilled: true, shouldAbort: () => false, onProgress: () => {},
+  });
+  check('整行全满才整行跳过', r.skipped === 1 && deps._written.length === 0);
+}
+{
+  // 写回内容清洗：模型输出「输出1：」前缀与残留标记不得混进单元格
+  const deps = makeDeps({ callModel: async () => '【1】输出1：甲\n【2】乙' });
+  const r = await runBatch(deps, {
+    rows: [row('r1', 'a')], columnNames: ['输出1', '输出2'], llmConc: 1,
+    shouldAbort: () => false, onProgress: () => {},
+  });
+  check('写回内容去标记与列名前缀', r.written === 2 && deps._written[0].cell.text === '甲' && deps._written[1].cell.text === '乙');
+}
+{
+  check('cleanSegment 去【1】与列名前缀', cleanSegment('【1】输出1：甲内容', '输出1', { splitMode: 'marker' }) === '甲内容');
+  check('cleanSegment 不误伤正文数字开头', cleanSegment('3.5万用户好评', '输出1', { splitMode: 'marker' }) === '3.5万用户好评');
+  check('cleanSegment 1. 样式按配置清洗', cleanSegment('1.甲', '输出1', { splitMode: 'marker', marker: '1.' }) === '甲');
+  check('cleanSegment 无配置兜底', cleanSegment('【2】乙', '输出1', {}) === '乙');
 }
 {
   let aborted = false;

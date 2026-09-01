@@ -34,6 +34,7 @@ export function formatContract(cfg = {}, outputColumns = []) {
       const ex = String(col.example || '').trim();
       colLines.push(`${i + 1}. 列名「${col.name || `输出${i + 1}`}」${ex ? '：参考案例如「' + ex + '」' : ''}`);
     });
+    colLines.push('- 每个分点的序号标记之后直接写该列的内容本身：不要重复列名（如「输出1：」），不要重复其他分点的内容，也不要输出多余的解释文字。');
   }
 
   if (splitMode === 'blank') {

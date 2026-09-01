@@ -8,6 +8,31 @@ import { buildMessages } from './prompt.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * 写回前清洗单个分点：去掉开头的序号标记（如【1】/ [1]）与「列名：」前缀，
+ * 避免模型输出的标记/列名混进单元格内容（用户反馈"内容不对"的主因之一）。
+ * 「1.」「一、」样式只在用户显式选了该标记样式时才清洗，避免误伤"3.5万"这类正文开头。
+ */
+export function cleanSegment(seg, colName, splitCfg = {}) {
+  let s = String(seg || '').trim();
+  const mode = splitCfg.splitMode || 'marker';
+  const marker = splitCfg.marker || '【1】';
+  // 默认契约标记（【n】/ [n]）几乎不会是正文开头，任何模式都安全清洗
+  s = s.replace(/^【\d+】\s*/, '');
+  s = s.replace(/^\[\d+\]\s*/, '');
+  if (mode === 'marker') {
+    if (marker === '1.') s = s.replace(/^\d+[.、]\s*/, '');
+    if (marker === '一、') s = s.replace(/^[一二三四五六七八九十]+、\s*/, '');
+  }
+  // 开头「列名：」/「列名:」前缀
+  const name = String(colName || '').trim();
+  if (name) {
+    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    s = s.replace(new RegExp('^' + esc + '\\s*[:：]\\s*'), '');
+  }
+  return s.trim();
+}
+
 /** 限制并发的 map（固定协程池）。可选 minIntervalMs 控制相邻请求最小间隔，用于限流。 */
 export async function mapWithConcurrency(items, limit, worker, onItem, minIntervalMs = 0) {
   const results = new Array(items.length);
@@ -52,7 +77,7 @@ export async function trialRun(deps, sourceText) {
  *  rows: Array<{recordId, text, existing?: string[]}>   existing 为该行输出列当前内容（用于 skipFilled）
  *  columnNames: string[]  输出列名（输出1…输出N）
  *  llmConc: number        LLM 并发
- *  skipFilled: boolean    跳过「输出1 已有内容」的行
+ *  skipFilled: boolean    true=跳过「所有输出列都已有内容」的整行；部分填充行只补空列（不覆盖已有格子）
  *  shouldAbort: ()=>boolean
  *  onProgress: (done, total, phase) => void
  * @returns {{failed, truncated, lessFilled, written, skipped}}
@@ -66,9 +91,14 @@ export async function runBatch(deps, p) {
   const N = columnNames.length;
   const result = { failed: [], truncated: 0, lessFilled: 0, written: 0, skipped: 0 };
 
-  // 0) 过滤跳过行
+  // 0) 过滤跳过行：skipFilled（未选「覆盖全部行」）时，仅"所有输出列都已有内容"的整行才跳过。
+  //    旧语义「第一列有内容就跳过整行」会把"输出1 有历史残留、其余列全空"的行误跳——即用户反馈的"乱跳过"。
+  //    部分填充的行保留，生成后只补空列、不覆盖已有格子（见下方 cellItems 组装）。
+  const filled = (v) => String(v || '').trim();
+  const rowAllFilled = (r) => Array.isArray(r.existing) && r.existing.length > 0
+    && columnNames.every((_, j) => filled(r.existing[j]));
   const workRows = rows.filter((r) => {
-    if (skipFilled && r.existing && String(r.existing[0] || '').trim()) {
+    if (skipFilled && rowAllFilled(r)) {
       result.skipped++;
       return false;
     }
@@ -136,8 +166,13 @@ export async function runBatch(deps, p) {
               failedRows.push({ recordId: row.recordId, error: `列「${colName}」不可用（类型不符）` });
               return;
             }
+            // skipFilled：该列已有内容 → 不覆盖（整行全满的已在步骤 0 过滤，此处只处理部分填充行）
+            if (skipFilled && filled(row.existing && row.existing[j])) return;
             const fid = nameToId.get(colName);
-            if (fid) cellItems.push({ recordId: row.recordId, cell: { fieldId: fid, columnName: colName, text: seg } });
+            if (fid) cellItems.push({
+              recordId: row.recordId,
+              cell: { fieldId: fid, columnName: colName, text: cleanSegment(seg, colName, deps.splitCfg) },
+            });
           });
         }
         if (parsed.warnings.length && deps.onWarn) deps.onWarn(row.recordId, parsed.warnings);
