@@ -204,6 +204,13 @@ function showCancelOverlay() {
   ]);
 }
 
+/** 严重错误：弹窗提示，避免只在日志/底部提示用户看不到 */
+function showError(title, message) {
+  return showModal(title || '出错了', el('div', { class: 'err-text', style: 'font-size:13px;line-height:1.6;white-space:pre-wrap' }, message), [
+    { label: '知道了', primary: true },
+  ]);
+}
+
 /* ---------- 分列设置 UI ---------- */
 function refreshSplitUI() {
   const mode = state.cfg.splitMode || 'marker';
@@ -289,7 +296,7 @@ function openSettings() {
     el('div', { class: 'set-grid' },
       // 服务商
       (() => {
-        const s = el('select', {},
+        const s = el('select', { id: 'setProvider' },
           ...PROVIDERS.map((pr) => el('option', { value: pr.id }, pr.name)));
         s.value = p.id;
         s.addEventListener('change', () => {
@@ -306,23 +313,23 @@ function openSettings() {
       p.fixedBaseUrl
         ? el('div', { class: 'form-field full' },
             el('div', { class: 'form-label' }, 'Base URL（由服务商固定）'),
-            el('input', { type: 'text', value: p.baseUrl, disabled: true, style: 'background:#f5f6f8;color:var(--muted)' }))
-        : liveField({ label: 'Base URL', value: cfg.baseUrl, placeholder: 'https://api.deepseek.com', key: 'baseUrl', full: true }),
+            el('input', { type: 'text', id: 'setBaseUrl', value: p.baseUrl, disabled: true, style: 'background:#f5f6f8;color:var(--muted)' }))
+        : liveField({ label: 'Base URL', value: cfg.baseUrl, placeholder: 'https://api.deepseek.com', key: 'baseUrl', full: true, id: 'setBaseUrl' }),
       // 模型：预设服务商用下拉，自定义自由输入
       (p.models && p.models.length)
         ? (() => {
             const cur = cfg.model && p.models.some((m) => m.value === cfg.model) ? cfg.model : p.models[0].value;
-            const s = el('select', {}, ...p.models.map((m) => el('option', { value: m.value }, m.label)));
+            const s = el('select', { id: 'setModel' }, ...p.models.map((m) => el('option', { value: m.value }, m.label)));
             s.value = cur;
             bindLive(s, 'model');
             return el('div', { class: 'form-field full' },
               el('div', { class: 'form-label' }, '模型（默认 2.5 Flash）'), s);
           })()
-        : liveField({ label: '模型名', value: cfg.model, placeholder: 'deepseek-chat', key: 'model', full: true }),
+        : liveField({ label: '模型名', value: cfg.model, placeholder: 'deepseek-chat', key: 'model', full: true, id: 'setModel' }),
       // API Key
-      liveField({ label: 'API Key', type: 'password', value: cfg.apiKey, placeholder: 'sk-…', key: 'apiKey', full: true }),
+      liveField({ label: 'API Key', type: 'password', value: cfg.apiKey, placeholder: 'sk-…', key: 'apiKey', full: true, id: 'setApiKey' }),
       // 并发
-      liveField({ label: '并发数（1–8）', value: cfg.llmConc || 3, key: 'llmConc', isNum: true }),
+      liveField({ label: '并发数（1–8）', value: cfg.llmConc || 3, key: 'llmConc', isNum: true, id: 'setConc' }),
     ),
     el('div', { class: 'field-row', style: 'margin-top:10px' },
       el('button', { class: 'btn', onclick: onVerifyClick }, '验证模型配置'),
@@ -343,8 +350,7 @@ function openSettings() {
     el('div', { class: 'set-tip' }, '模板存于本浏览器，用于快速切换不同总要求；导入 / 导出文档请在主界面「总要求」面板操作。'),
   );
 
-  content.append(gModel, gTpl,
-    el('div', { id: 'verifyMsg', class: 'verify-msg', style: 'display:none' }));
+  content.append(gModel, gTpl);
 
   showModal('设置', content, [{ label: '完成', primary: true, onClick: onSettingsDone }]);
 }
@@ -361,16 +367,18 @@ function bindLive(input, key, isNum = false, transform = null) {
 }
 
 /** 生成一个带标签、自动实时落盘的表单字段（扁平化，避免深层嵌套） */
-function liveField({ label, type = 'text', value = '', placeholder = '', key, isNum = false, transform = null, full = false, options = null }) {
+function liveField({ label, type = 'text', value = '', placeholder = '', key, isNum = false, transform = null, full = false, options = null, id = null }) {
   const control = options
     ? (() => {
-        const s = el('select', {}, ...options.map((o) => el('option', { value: o.value }, o.label)));
+        const s = el('select', id ? { id } : {}, ...options.map((o) => el('option', { value: o.value }, o.label)));
         s.value = value;
         bindLive(s, key, false, transform);
         return s;
       })()
     : (() => {
-        const i = el('input', { type, value: value === '' ? '' : value, placeholder });
+        const attrs = { type, value: value === '' ? '' : value, placeholder };
+        if (id) attrs.id = id;
+        const i = el('input', attrs);
         bindLive(i, key, isNum, transform);
         return i;
       })();
@@ -382,12 +390,29 @@ function liveField({ label, type = 'text', value = '', placeholder = '', key, is
 
 /* ---------- 模型配置验证 ---------- */
 async function verifyCurrentModel() {
-  const cfg = collectCfg();
-  if (!cfg.baseUrl || !cfg.apiKey || !cfg.model) {
-    return { ok: false, message: '请先填写 Base URL、API Key、模型名。' };
-  }
+  // 直接从 DOM 读取（兼容密码管理器自动填充、避免 bindLive 事件未触发）
+  const providerId = $('setProvider') ? $('setProvider').value : state.cfg.provider;
+  const provider = getProvider(providerId);
+
+  const domBase = $('setBaseUrl');
+  const domKey = $('setApiKey');
+  const domModel = $('setModel');
+
+  const baseUrl = provider.fixedBaseUrl
+    ? provider.baseUrl
+    : ((domBase ? domBase.value : state.cfg.baseUrl) || '').trim();
+  const apiKey = (domKey ? domKey.value : state.cfg.apiKey || '').trim();
+  const model = (domModel ? domModel.value : state.cfg.model || '').trim();
+
+  // 把当前读到的值持久化（尤其密码管理器填充未触发 input 时）
+  state.cfg = saveCfg({ provider: providerId, baseUrl, apiKey, model });
+
+  if (!apiKey) return { ok: false, message: '请填写 API Key。' };
+  if (!model) return { ok: false, message: provider.models.length ? '请选择模型。' : '请填写模型名。' };
+  if (!provider.fixedBaseUrl && !baseUrl) return { ok: false, message: '请填写 Base URL。' };
+
   log('正在验证模型配置…');
-  return verifyModel(cfg, { shouldAbort: () => false });
+  return verifyModel({ ...state.cfg, baseUrl, apiKey, model }, { shouldAbort: () => false });
 }
 
 async function onVerifyClick() {
@@ -401,17 +426,11 @@ async function onVerifyClick() {
 
 async function onSettingsDone() {
   const res = await verifyCurrentModel();
-  const msgEl = $('verifyMsg');
   if (res.ok) {
     log('模型配置校验通过 ✅', 'ok');
-    if (msgEl) { msgEl.style.display = 'none'; }
     return true;
   }
-  if (msgEl) {
-    msgEl.textContent = '⚠ ' + res.message;
-    msgEl.className = 'verify-msg err';
-    msgEl.style.display = 'block';
-  }
+  showError('⚠ 模型配置有问题', res.message);
   return false; // 留在设置弹窗让用户修改
 }
 
@@ -530,7 +549,7 @@ export async function reloadTable() {
     };
   } catch (e) {
     $('tableInfo').textContent = '加载失败：' + e.message;
-    log('表加载失败：' + e.message, 'err');
+    showError('表加载失败', e.message);
   }
 }
 
@@ -548,12 +567,34 @@ async function loadRows(columnNames = []) {
   });
 }
 
+/** 校验并返回可用于调用的有效模型配置；缺配置时弹窗并返回 null */
+function ensureModelConfig() {
+  const cfg = collectCfg();
+  const provider = getProvider(cfg.provider);
+  const effectiveBaseUrl = provider.fixedBaseUrl ? provider.baseUrl : cfg.baseUrl;
+  if (!effectiveBaseUrl || !cfg.apiKey || !cfg.model) {
+    const missing = [];
+    if (!effectiveBaseUrl && !provider.fixedBaseUrl) missing.push('Base URL');
+    if (!cfg.apiKey) missing.push('API Key');
+    if (!cfg.model) missing.push(provider.models.length ? '模型' : '模型名');
+    showError('缺少模型配置', missing.length ? `请先在右上角「⚙ 设置」中填写：${missing.join('、')}。` : '模型配置不完整，请检查设置。');
+    return null;
+  }
+  return { ...cfg, baseUrl: effectiveBaseUrl };
+}
+
 /* ---------- 试跑 ---------- */
 async function onTrial() {
-  const cfg = collectCfg();
-  if (!state.sourceFieldId) return log('请先选择源字段', 'warn');
-  if (!cfg.baseUrl || !cfg.apiKey || !cfg.model) return log('请先在右上角 ⚙ 设置中填写模型配置（Base URL / Key / 模型名）', 'err');
-  if (!cfg.requirement.trim()) return log('总要求为空', 'warn');
+  if (!state.sourceFieldId) {
+    showError('缺少数据源', '请先选择「源字段」（每行素材所在列）。');
+    return;
+  }
+  const cfg = ensureModelConfig();
+  if (!cfg) return;
+  if (!cfg.requirement.trim()) {
+    showError('总要求为空', '请在「总要求」面板输入给 AI 的输出约束。');
+    return;
+  }
   setRunning(true, 'trial');
   try {
     const rows = await loadRows([]);
@@ -567,7 +608,7 @@ async function onTrial() {
     (result.warnings || []).forEach((w) => log(w, 'warn'));
     showPreview(result, first);
   } catch (e) {
-    log('试跑失败：' + e.message, 'err');
+    showError('试跑失败', e.message);
   } finally {
     setRunning(false);
   }
@@ -640,9 +681,12 @@ function makeDeps(cfg) {
 }
 
 async function onRun(presetColumns = null) {
-  const cfg = collectCfg();
-  if (!state.sourceFieldId) return log('请先选择源字段', 'warn');
-  if (!cfg.baseUrl || !cfg.apiKey || !cfg.model) return log('请先在右上角 ⚙ 设置中填写模型配置', 'err');
+  if (!state.sourceFieldId) {
+    showError('缺少数据源', '请先选择「源字段」（每行素材所在列）。');
+    return;
+  }
+  const cfg = ensureModelConfig();
+  if (!cfg) return;
   setRunning(true, 'run');
   state.aborted = false;
   state.t0 = Date.now();
@@ -674,26 +718,30 @@ async function onRun(presetColumns = null) {
     } else {
       log(`完成：写回 ${result.written} 格，跳过 ${result.skipped} 行，失败 ${result.failed.length} 项，分点超列截断 ${result.truncated} 行，不足留空 ${result.lessFilled} 行`, 'ok');
     }
-    if (result.fatal) log('建列失败：' + result.fatal, 'err');
+    if (result.fatal) showError('建列失败', result.fatal);
     if (result.failed.length) {
       $('btnRetry').disabled = false;
       log('失败明细（前 20 条）：\n' + result.failed.slice(0, 20).map((f) => `  行 ${f.recordId}: ${f.error}`).join('\n'), 'err');
     }
   } catch (e) {
-    log('批量执行失败：' + e.message, 'err');
+    showError('批量执行失败', e.message);
   } finally {
     setRunning(false);
   }
 }
 
 async function onRetryFailed() {
-  if (!state.lastResult || !state.lastResult.failed.length) return log('没有可重跑的失败项', 'warn');
+  if (!state.lastResult || !state.lastResult.failed.length) {
+    showError('没有可重跑的失败项', '当前没有失败的行，无需重跑。');
+    return;
+  }
+  const cfg = ensureModelConfig();
+  if (!cfg) return;
   const failedIds = new Set(state.lastResult.failed.map((f) => f.recordId));
   setRunning(true, 'run');
   state.aborted = false;
   state.t0 = Date.now();
   try {
-    const cfg = collectCfg();
     const rows = (state.lastRows || []).filter((r) => failedIds.has(r.recordId));
     log(`重跑 ${rows.length} 个失败行…`);
     const deps = makeDeps(cfg);
@@ -706,7 +754,7 @@ async function onRetryFailed() {
     log(`重跑完成：写回 ${result.written} 格，仍失败 ${result.failed.length} 项`, result.failed.length ? 'warn' : 'ok');
     if (!result.failed.length) $('btnRetry').disabled = true;
   } catch (e) {
-    log('重跑失败：' + e.message, 'err');
+    showError('重跑失败', e.message);
   } finally {
     setRunning(false);
   }
