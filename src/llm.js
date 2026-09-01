@@ -115,3 +115,37 @@ export function joinUrl(base, path) {
   if (!/\/v\d+$/.test(b)) b += '/v1'; // 未带版本号则补 /v1（DeepSeek/硅基流动/OpenAI 均兼容）
   return b + path;
 }
+
+/**
+ * 把底层错误翻译成中文友好提示。
+ */
+export function friendlyError(e) {
+  const msg = (e && e.message) || String(e);
+  if (/401/.test(msg)) return '密钥无效或权限不足（401）：请检查 API Key 是否正确、是否已激活。';
+  if (/403/.test(msg)) return '无权限访问该模型（403）：当前账号或密钥没有该模型的访问权限。';
+  if (/404/.test(msg)) return '地址或模型不存在（404）：请检查 Base URL 路径与模型名是否填写正确。';
+  if (/429/.test(msg)) return '请求过于频繁（429 限流）：请稍后重试，或降低并发数。';
+  if (/400/.test(msg)) return '请求被拒绝（400）：请检查模型名是否受支持、参数是否合法。';
+  if (/网络错误|fetch failed|TypeError/.test(msg)) return '网络无法连接：请检查 Base URL 是否正确、网络是否通畅，或是否需要代理。';
+  if (/超时/.test(msg)) return '请求超时：模型响应较慢，可稍后重试或更换模型。';
+  return msg;
+}
+
+/**
+ * 验证模型配置是否可用：发一个极小 chat 请求（max_tokens=1）。
+ * @returns {Promise<{ok:boolean, message:string}>}
+ */
+export async function verifyModel(cfg, opts = {}) {
+  const testCfg = { ...cfg, timeoutMs: 30000, maxTokens: 1 };
+  try {
+    await callLLM(testCfg, [{ role: 'user', content: 'ping' }], {
+      fetchImpl: opts.fetchImpl,
+      retries: 1,
+      onRetry: () => {},
+      shouldAbort: opts.shouldAbort,
+    });
+    return { ok: true, message: '配置有效，模型可正常响应。' };
+  } catch (e) {
+    return { ok: false, message: friendlyError(e) };
+  }
+}

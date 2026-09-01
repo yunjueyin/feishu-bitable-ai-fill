@@ -17,6 +17,7 @@ function check(name, cond, detail = '') {
   else { failures.push(name); console.log(`FAIL  ${name}${detail ? '  -- ' + detail : ''}`); }
 }
 const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const row = (id, text, existing) => ({ recordId: id, text, existing: existing || [] });
 
 /* ---------- parser ---------- */
 console.log('# parser');
@@ -66,6 +67,44 @@ console.log('# parser');
   check('cellToText 对象 value', cellToText({ value: [{ text: 'x' }] }) === 'x');
   check('cellToText null/undefined', cellToText(null) === '' && cellToText(undefined) === '');
   check('cellToText 数字', cellToText(123) === '123');
+}
+
+/* ---------- parser: 多分列模式 ---------- */
+console.log('# parser (multi-mode)');
+{
+  const r = parseSegments('段一\n---\n段二\n---\n段三', { splitMode: 'paragraph', sep: '---' });
+  check('paragraph 分隔符 3 段', r.segments.length === 3 && r.strategy === 'paragraph' && r.segments[0] === '段一' && r.segments[2] === '段三');
+}
+{
+  const r = parseSegments('只有一段没有分隔', { splitMode: 'paragraph', sep: '---' });
+  check('paragraph 无分隔符 → 单段', r.segments.length === 1 && r.strategy === 'single');
+}
+{
+  const r = parseSegments('段一\n\n段二', { splitMode: 'blank' });
+  check('blank 空行 2 段', r.segments.length === 2 && r.strategy === 'blank');
+}
+{
+  const r = parseSegments('## 卖点\n好东西\n## 场景\n随处用', { splitMode: 'heading', headingLevel: '##' });
+  check('heading 2 段含标题', r.segments.length === 2 && r.strategy === 'heading' && r.segments[0].startsWith('## 卖点') && r.segments[1].includes('随处用'));
+}
+{
+  const r = parseSegments('毫无标题的一段文字', { splitMode: 'heading', headingLevel: '##' });
+  check('heading 无标题 → single', r.strategy === 'single' && r.segments.length === 1);
+}
+{
+  const r = parseSegments('【1】甲\n【2】乙', { splitMode: 'marker', marker: '【1】' });
+  check('marker 显式 splitMode', r.strategy === 'marker' && r.segments.length === 2);
+}
+{
+  // runBatch 透传 splitCfg：heading 单段视为有效 1 列（非失败）
+  const deps = makeDeps({
+    splitCfg: { splitMode: 'heading', headingLevel: '##' },
+    callModel: async () => '## 标题\n仅一段内容',
+  });
+  const r = await runBatch(deps, {
+    rows: [row('r1', 'a')], columnNames: ['输出1'], llmConc: 1, shouldAbort: () => false, onProgress: () => {},
+  });
+  check('heading 单段不判失败（填 1 列）', r.failed.length === 0 && deps._written.length === 1);
 }
 
 /* ---------- prompt ---------- */
@@ -137,6 +176,7 @@ function makeDeps(over = {}) {
   return {
     requirement: '要求',
     marker: '【1】',
+    splitCfg: over.splitCfg,
     callModel: over.callModel || (async (messages) => '【1】甲\n【2】乙'),
     ensureColumns: over.ensureColumns || (async (names) => ({
       fieldIds: names.map((n, i) => 'fld' + i),
@@ -150,7 +190,6 @@ function makeDeps(over = {}) {
     _created: created, _written: written,
   };
 }
-const row = (id, text, existing) => ({ recordId: id, text, existing: existing || [] });
 
 {
   const deps = makeDeps();

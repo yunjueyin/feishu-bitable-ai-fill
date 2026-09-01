@@ -22,6 +22,15 @@ export async function getTableById(tableId) {
   return bitable.base.getTableById(tableId);
 }
 
+/** 当前激活表（用户正在查看的表）。飞书插件环境内有效，非插件环境返回 null。 */
+export async function getActiveTable() {
+  try {
+    const t = await bitable.base.getActiveTable();
+    if (t && t.id) return t;
+  } catch (e) { /* 非插件环境或权限不足，落入兜底 */ }
+  return null;
+}
+
 /** 数据表列表（getTableMetaList 最可靠，getTableList 的 name 经常为空） */
 export async function listTables() {
   try {

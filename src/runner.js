@@ -33,9 +33,9 @@ export async function mapWithConcurrency(items, limit, worker, onItem) {
  * @returns {{segments:string[], raw:string, strategy:string, warnings:string[]}}
  */
 export async function trialRun(deps, sourceText) {
-  const messages = buildMessages(deps.requirement, sourceText);
+  const messages = buildMessages(deps.requirement, sourceText, deps.splitCfg);
   const raw = await deps.callModel(messages, {});
-  const parsed = parseSegments(raw, deps.marker);
+  const parsed = parseSegments(raw, deps.splitCfg);
   return { ...parsed, raw };
 }
 
@@ -86,12 +86,14 @@ export async function runBatch(deps, p) {
         return;
       }
       try {
-        const messages = buildMessages(deps.requirement, row.text);
+        const messages = buildMessages(deps.requirement, row.text, deps.splitCfg);
         const raw = await deps.callModel(messages, { shouldAbort });
         if (shouldAbort()) return;
-        const parsed = parseSegments(raw, deps.marker);
-        // single 策略 = 模型完全没有分段（无任何标记且无空行），批量场景视为未按格式输出
-        if (!parsed.segments.length || parsed.strategy === 'single') {
+        const parsed = parseSegments(raw, deps.splitCfg);
+        // single 策略：marker/blank 模式视为未分列（失败）；heading/paragraph 单段视为有效 1 列
+        const singleFail = parsed.strategy === 'single'
+          && parsed.splitMode !== 'heading' && parsed.splitMode !== 'paragraph';
+        if (!parsed.segments.length || singleFail) {
           failedRows.push({ recordId: row.recordId, error: '解析出 0 个分点：' + parsed.warnings.join(';') });
         } else {
           if (parsed.segments.length > N) result.truncated++;
