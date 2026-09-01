@@ -8,14 +8,21 @@ import { buildMessages } from './prompt.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** 限制并发的 map（固定协程池） */
-export async function mapWithConcurrency(items, limit, worker, onItem) {
+/** 限制并发的 map（固定协程池）。可选 minIntervalMs 控制相邻请求最小间隔，用于限流。 */
+export async function mapWithConcurrency(items, limit, worker, onItem, minIntervalMs = 0) {
   const results = new Array(items.length);
   let cursor = 0;
   let done = 0;
+  let lastAt = 0;
   async function run() {
     while (cursor < items.length) {
       const i = cursor++;
+      if (minIntervalMs > 0) {
+        const now = Date.now();
+        const wait = Math.max(0, minIntervalMs - (now - lastAt));
+        if (wait > 0) await sleep(wait);
+        lastAt = Date.now();
+      }
       results[i] = await worker(items[i], i);
       done++;
       if (onItem) onItem(done, items.length);
@@ -110,6 +117,8 @@ export async function runBatch(deps, p) {
       }
       done++; onProgress(done, total, 'generate');
     },
+    null,
+    deps.minIntervalMs || 0,
   );
 
   if (shouldAbort()) return { ...result, failed: failedRows, aborted: true };
@@ -120,6 +129,9 @@ export async function runBatch(deps, p) {
     ensured = await deps.ensureColumns(columnNames);
   } catch (e) {
     return { ...result, failed: failedRows, fatal: String(e && e.message || e), aborted: false };
+  }
+  if (!ensured || !Array.isArray(ensured.fieldIds)) {
+    return { ...result, failed: failedRows, fatal: `建列返回异常：${JSON.stringify(ensured)}`, aborted: false };
   }
   if (ensured.warnings && deps.onWarn) ensured.warnings.forEach((w) => deps.onWarn(null, [w]));
   const nameToId = new Map(ensured.fieldIds.map((fid, i) => [columnNames[i], fid]));

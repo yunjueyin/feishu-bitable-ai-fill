@@ -28,6 +28,9 @@ export function unwrapArray(v) {
   if (Array.isArray(v.records)) return v.records;
   if (Array.isArray(v.list)) return v.list;
   if (Array.isArray(v.result)) return v.result;
+  if (Array.isArray(v.items)) return v.items;
+  if (Array.isArray(v.fields)) return v.fields;
+  if (Array.isArray(v.values)) return v.values;
   return [];
 }
 

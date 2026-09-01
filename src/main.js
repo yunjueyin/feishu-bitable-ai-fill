@@ -15,7 +15,7 @@ import {
 } from './feishu.js';
 import { trialRun, runBatch, retryFailed, batchWriteCells } from './runner.js';
 
-export const APP_VERSION = '20260901d';
+export const APP_VERSION = '20260901e';
 
 const state = {
   cfg: loadCfg(),
@@ -407,15 +407,23 @@ function openSettings() {
         : liveField({ label: '模型名', value: cfg.model, placeholder: 'deepseek-chat', key: 'model', full: true, id: 'setModel' }),
       // API Key
       liveField({ label: 'API Key', type: 'password', value: cfg.apiKey, placeholder: 'sk-…', key: 'apiKey', full: true, id: 'setApiKey' }),
-      // 并发
-      liveField({ label: '并发数（1–8）', value: cfg.llmConc || 3, key: 'llmConc', isNum: true, id: 'setConc' }),
+      // 并发：Agnes 等带 rateLimit 的服务商固定为保守值，不让用户手动设置
+      p.rateLimit
+        ? el('div', { class: 'form-field full' },
+            el('div', { class: 'form-label' }, '并发与限流（由服务商自动配置）'),
+            el('input', {
+              type: 'text', disabled: true,
+              value: `并发 ${p.rateLimit.maxConc}，请求间隔 ≥ ${p.rateLimit.minIntervalMs}ms（避免触发限流）`,
+              style: 'background:#f5f6f8;color:var(--muted)',
+            }))
+        : liveField({ label: '并发数（1–8）', value: cfg.llmConc || 3, key: 'llmConc', isNum: true, id: 'setConc' }),
     ),
     el('div', { class: 'field-row', style: 'margin-top:10px' },
       el('button', { class: 'btn', onclick: onVerifyClick }, '验证模型配置'),
     ),
     el('div', { class: 'set-tip' },
       p.fixedBaseUrl
-        ? `已选「${p.name}」：在 Agnes AI 控制台获取 API Key 后粘贴、并选择模型即可（默认 2.5 Flash）。点击「验证」或「完成」会自动发一次最小请求校验配置；Key 明文存于浏览器 localStorage，不会上传，勿在公共设备保存。`
+        ? `已选「${p.name}」：在 Agnes AI 控制台获取 API Key 后粘贴、并选择模型即可（默认 2.5 Flash）。系统已按官方限流自动设置并发=${p.rateLimit?.maxConc ?? 1}、请求间隔=${p.rateLimit?.minIntervalMs ?? 0}ms，无需手动调整；点击「验证」或「完成」会自动发一次最小请求校验配置；Key 明文存于浏览器 localStorage，不会上传，勿在公共设备保存。`
         : '选好服务商后，填写 Base URL / API Key / 模型名即可。点击「验证」或「完成」会自动发一次最小请求校验配置；Key 明文存于浏览器 localStorage，不会上传。'),
   );
 
@@ -636,7 +644,10 @@ export async function reloadTable() {
 /* ---------- 读取行数据 ---------- */
 async function loadRows(columnNames = []) {
   const records = await readRecords(state.table, state.viewId);
+  if (!Array.isArray(records)) throw new Error(`读取记录返回非数组：${typeof records}`);
+  if (!Array.isArray(state.fields)) throw new Error('字段列表异常，请重新点击「刷新表/字段」');
   const outIdByName = new Map(state.fields.map((f) => [f.name, f.id]));
+  if (!Array.isArray(columnNames)) throw new Error('输出列名不是数组');
   return records.map((rec) => {
     const text = cellToText(rec.fields && rec.fields[state.sourceFieldId]);
     const existing = columnNames.map((name) => {
@@ -730,6 +741,15 @@ function showPreview(result, firstRow) {
 }
 
 /* ---------- 批量执行 ---------- */
+/** 根据服务商限流策略计算有效并发（ Agnes 等固定服务商不开放给用户手动设置并发） */
+function getEffectiveConc(cfg) {
+  const provider = getProvider(cfg.provider);
+  if (provider.rateLimit && typeof provider.rateLimit.maxConc === 'number') {
+    return Math.min(Math.max(1, cfg.llmConc || 1), provider.rateLimit.maxConc);
+  }
+  return Math.max(1, Math.min(8, cfg.llmConc || 3));
+}
+
 function makeDeps(cfg) {
   const splitCfg = {
     splitMode: cfg.splitMode || 'marker',
@@ -738,10 +758,13 @@ function makeDeps(cfg) {
     headingLevel: cfg.headingLevel || '##',
   };
   const outputColumns = Array.isArray(cfg.outputColumns) ? cfg.outputColumns.filter((c) => String(c.name || '').trim()) : [];
+  const provider = getProvider(cfg.provider);
+  const rateLimit = provider.rateLimit;
   return {
     requirement: cfg.requirement,
     splitCfg,
     outputColumns,
+    minIntervalMs: rateLimit ? rateLimit.minIntervalMs : 0,
     callModel: async (messages, { shouldAbort }) => callLLM(cfg, messages, {
       shouldAbort,
       onRetry: (attempt, err, delay) => log(`模型请求第 ${attempt} 次重试（${err.message.slice(0, 80)}），${(delay / 1000).toFixed(0)}s 后…`, 'warn'),
@@ -799,10 +822,11 @@ async function onRun(presetColumns = null) {
     state.lastColumns = columns;
     const rows = await loadRows(columns);
     state.lastRows = rows;
-    log(`开始批量：共 ${rows.length} 行，输出列 [${columns.join(', ')}]，并发 ${cfg.llmConc}${cfg.skipFilled ? '，跳过已有内容' : ''}`);
+    const effConc = getEffectiveConc(cfg);
+    log(`开始批量：共 ${rows.length} 行，输出列 [${columns.join(', ')}]，并发 ${effConc}${cfg.skipFilled ? '，跳过已有内容' : ''}`);
     const deps = makeDeps(cfg);
     const result = await runBatch(deps, {
-      rows, columnNames: columns, llmConc: cfg.llmConc, skipFilled: cfg.skipFilled,
+      rows, columnNames: columns, llmConc: effConc, skipFilled: cfg.skipFilled,
       shouldAbort: () => state.aborted,
       onProgress: setProgress,
     });
@@ -840,7 +864,7 @@ async function onRetryFailed() {
     log(`重跑 ${rows.length} 个失败行…`);
     const deps = makeDeps(cfg);
     const result = await runBatch(deps, {
-      rows, columnNames: state.lastColumns, llmConc: cfg.llmConc, skipFilled: false,
+      rows, columnNames: state.lastColumns, llmConc: getEffectiveConc(cfg), skipFilled: false,
       shouldAbort: () => state.aborted,
       onProgress: setProgress,
     });
@@ -870,10 +894,87 @@ function setRunning(running, mode) {
 }
 
 /* ---------- 启动 ---------- */
+/**
+ * 把粘贴进来的 HTML 转成 Markdown，尽量保留标题等级和背景高亮。
+ * 背景色等无法直接用 Markdown 表达，保留为带 style 的 inline HTML。
+ */
+function htmlToMarkdown(html) {
+  if (!html) return '';
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html.replace(/<br\s*\/?>/gi, '\n');
+  // 先把背景色 span 做占位保护（避免被后续规则误处理）
+  tmp.querySelectorAll('span[style*="background"], span[style*="background-color"]').forEach((n) => {
+    const style = n.getAttribute('style') || '';
+    const m = style.match(/background(?:-color)?\s*:\s*([^;]+)/i);
+    const color = m ? m[1].trim() : '';
+    if (color) {
+      const wrap = document.createElement('span');
+      wrap.textContent = `<span style="background-color:${color}">${n.textContent}</span>`;
+      n.replaceWith(wrap);
+    }
+  });
+  function walk(node) {
+    let md = '';
+    for (const c of node.childNodes) {
+      if (c.nodeType === 3) {
+        md += c.textContent;
+      } else if (c.nodeType === 1) {
+        const tag = c.tagName.toLowerCase();
+        const inner = walk(c);
+        if (/^h([1-6])$/.test(tag)) {
+          const lv = tag[1];
+          md += '\n' + '#'.repeat(Number(lv)) + ' ' + inner.trim() + '\n';
+        } else if (tag === 'p') {
+          md += '\n' + inner.trim() + '\n';
+        } else if (tag === 'div') {
+          md += '\n' + inner.trim() + '\n';
+        } else if (tag === 'b' || tag === 'strong') {
+          md += `**${inner.trim()}**`;
+        } else if (tag === 'i' || tag === 'em') {
+          md += `*${inner.trim()}*`;
+        } else if (tag === 'u') {
+          md += `<u>${inner.trim()}</u>`;
+        } else if (tag === 's' || tag === 'strike' || tag === 'del') {
+          md += `~~${inner.trim()}~~`;
+        } else if (tag === 'li') {
+          md += inner.trim();
+        } else if (tag === 'ul') {
+          md += '\n' + Array.from(c.children).map((li) => '- ' + walk(li).trim()).join('\n') + '\n';
+        } else if (tag === 'ol') {
+          md += '\n' + Array.from(c.children).map((li, i) => `${i + 1}. ` + walk(li).trim()).join('\n') + '\n';
+        } else if (tag === 'pre') {
+          md += '\n```\n' + inner.trim() + '\n```\n';
+        } else if (tag === 'code') {
+          md += '`' + inner.trim() + '`';
+        } else if (tag === 'a' && c.getAttribute('href')) {
+          md += `[${inner.trim()}](${c.getAttribute('href')})`;
+        } else {
+          md += inner;
+        }
+      }
+    }
+    return md;
+  }
+  return walk(tmp).replace(/\n{3,}/g, '\n\n').trim();
+}
+
 function bindCfgInputs() {
   const req = $('requirement');
   req.value = state.cfg.requirement || '';
   req.addEventListener('change', () => saveCfg({ requirement: req.value }));
+  // 粘贴时保留标题等级/背景色（转换为 Markdown + inline HTML）
+  req.addEventListener('paste', (e) => {
+    const html = e.clipboardData && e.clipboardData.getData('text/html');
+    if (!html) return; // 无 HTML 时走默认纯文本粘贴
+    e.preventDefault();
+    const md = htmlToMarkdown(html);
+    const start = req.selectionStart || 0;
+    const end = req.selectionEnd || 0;
+    const before = req.value.slice(0, start);
+    const after = req.value.slice(end);
+    req.value = before + md + after;
+    saveCfg({ requirement: req.value });
+  });
   const imp = $('importFile');
   imp.addEventListener('change', () => { handleImportFile(imp.files[0]); imp.value = ''; });
 }

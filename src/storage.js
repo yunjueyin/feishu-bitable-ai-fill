@@ -24,6 +24,9 @@ export const PROVIDERS = [
       { value: 'agnes-2.5-pro', label: '2.5 Pro（强推理 · 付费 · 1M）' },
     ],
     defaultModel: 'agnes-2.5-flash',
+    // 官方限流：免费/默认用户文本模型 Allowed RPM 30 / Effective RPM 20。
+    // 保守起见：并发固定 1，请求间隔 ≥ 3.5 秒，确保不触发限流。
+    rateLimit: { maxConc: 1, minIntervalMs: 3500 },
   },
   {
     id: 'custom',
