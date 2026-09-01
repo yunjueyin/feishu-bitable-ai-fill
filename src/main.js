@@ -15,7 +15,7 @@ import {
 } from './feishu.js';
 import { trialRun, runBatch, retryFailed, batchWriteCells } from './runner.js';
 
-export const APP_VERSION = '20260901h';
+export const APP_VERSION = '20260902a';
 
 const state = {
   cfg: loadCfg(),
@@ -33,131 +33,91 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 
+/* ---------- 线性图标（Feishu 风格，替换 emoji） ---------- */
+const ICONS = {
+  sparkle: '<path d="M12 2l2.4 6.4L21 11l-6.6 2.6L12 20l-2.4-6.4L3 11l6.6-2.6z"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>',
+  refresh: '<path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>',
+  upload: '<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/>',
+  download: '<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  trash: '<path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m2 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/>',
+  play: '<path d="M6 4l14 8-14 8V4z"/>',
+  retry: '<path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>',
+  stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
+  chevron: '<path d="M9 18l6-6-6-6"/>',
+  check: '<path d="M20 6L9 17l-5-5"/>',
+};
+function iconSvg(name, size = 16) {
+  const span = el('span', { class: 'ic' });
+  span.style.width = size + 'px';
+  span.style.height = size + 'px';
+  span.innerHTML = `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ''}</svg>`;
+  return span;
+}
+const SHORT_SPLIT = { marker: '序号标记', paragraph: '分段符', blank: '换行符', heading: '标题符' };
+
 /* ---------- 渲染 ---------- */
 function render() {
   const app = $('app');
   app.innerHTML = '';
+
+  // 顶栏
   app.appendChild(el('div', { class: 'topbar' },
     el('div', { class: 'brand' },
-      el('div', { class: 'brand-logo' }, 'AI'),
+      el('div', { class: 'brand-logo' }, iconSvg('sparkle', 18)),
       el('div', { class: 'brand-text' },
         el('b', {}, 'AI 批量填表'),
-        el('span', {}, `v${APP_VERSION} · 飞书多维表内容生成`),
+        el('span', {}, '飞书多维表内容生成'),
       ),
     ),
     el('div', { class: 'topbar-actions' },
-      el('button', { class: 'icon-btn', title: '设置', onclick: openSettings }, '⚙'),
+      el('button', { class: 'icon-btn', title: '设置', onclick: openSettings }, iconSvg('gear', 18)),
     ),
   ));
 
   // ① 数据源
   app.appendChild(el('div', { class: 'panel', style: '--d:.05s' },
     el('div', { class: 'panel-head' },
-      el('div', { class: 'panel-index' }, '1'),
       el('div', { class: 'panel-title' }, '数据源'),
-    ),
-    el('div', { class: 'field-row' },
-      el('div', { class: 'form-field' },
-        el('div', { class: 'form-label' }, '源字段（每行该列内容作为素材喂给 AI）'),
-        el('select', { id: 'sourceField' }),
+      el('div', { class: 'panel-extra' },
+        el('button', { class: 'icon-btn', id: 'btnReload', title: '刷新表 / 字段', onclick: reloadTable }, iconSvg('refresh', 16)),
       ),
     ),
-    el('div', { class: 'field-row' },
-      el('button', { class: 'btn', id: 'btnReload', onclick: reloadTable }, '↻ 刷新表 / 字段'),
-      el('div', { class: 'hint', id: 'tableInfo', style: 'flex:1' }, '加载中…'),
+    el('div', { class: 'seg-control' },
+      el('select', { id: 'sourceField', class: 'grow' }),
     ),
+    el('div', { class: 'hint', id: 'tableInfo', style: 'margin-top:8px' }, '加载中…'),
   ));
 
   // ② 总要求
   app.appendChild(el('div', { class: 'panel', style: '--d:.12s' },
     el('div', { class: 'panel-head' },
-      el('div', { class: 'panel-index' }, '2'),
       el('div', { class: 'panel-title' }, '总要求'),
       el('div', { class: 'panel-extra' },
-        el('select', { id: 'tplSel', style: 'max-width:170px' }),
+        el('select', { id: 'tplSel', class: 'mini' }),
+        el('button', { class: 'icon-btn', id: 'btnImport', title: '导入文档', onclick: onImportClick }, iconSvg('upload', 16)),
+        el('select', { id: 'exportFmt', class: 'mini', title: '导出格式' },
+          ...EXPORT_FORMATS.map((f) => el('option', { value: f.value }, f.label))),
+        el('button', { class: 'icon-btn', id: 'btnExport', title: '导出文档', onclick: onExportClick }, iconSvg('download', 16)),
+        el('input', { type: 'file', id: 'importFile', accept: getImportAccept(), style: 'display:none' }),
       ),
     ),
-    el('textarea', { id: 'requirement', class: 'textarea-req', placeholder: '粘贴总要求文档（给 AI 的输出约束）。例：\n基于素材撰写产品文案，口语化、每条不超过 30 字、不得出现"首先"等套话；输出 5 个分点，分别覆盖卖点、场景、人群、对比、行动号召。' }),
-    el('div', { class: 'toolbar' },
-      el('button', { class: 'btn', id: 'btnImport', onclick: onImportClick }, '📥 导入文档'),
-      el('select', { id: 'exportFmt', style: 'max-width:200px' },
-        ...EXPORT_FORMATS.map((f) => el('option', { value: f.value }, f.label)),
-      ),
-      el('button', { class: 'btn', id: 'btnExport', onclick: onExportClick }, '📤 导出文档'),
-      el('input', { type: 'file', id: 'importFile', accept: getImportAccept(), style: 'display:none' }),
-    ),
-    el('div', { class: 'hint-block' },
-      '导入支持 txt / md / html / doc / docx / xlsx / json 等；导出可选多种格式。总要求即给 AI 的约束，模型按「分列设置」输出分段。',
-    ),
+    el('textarea', { id: 'requirement', class: 'textarea-req', placeholder: '粘贴总要求文档（给 AI 的输出约束）。例如：基于素材写产品文案，口语化、每条不超过 30 字、不出现"首先"等套话；输出 5 个分点，覆盖卖点、场景、人群、对比、行动号召。' }),
   ));
 
-  // ③ 输出列模板
-  app.appendChild(el('div', { class: 'panel', style: '--d:.15s' },
-    el('div', { class: 'panel-head' },
-      el('div', { class: 'panel-index' }, '3'),
-      el('div', { class: 'panel-title' }, '输出列模板'),
-      el('span', { class: 'panel-tag', id: 'outputColTag' }, '未定义'),
-    ),
-    el('div', { class: 'hint-block', style: 'margin-top:4px' },
-      '在此定义输出列名和每列的参考案例，AI 会严格按这些列生成内容；不填则按首次试跑结果自动建列。'),
-    el('div', { id: 'outputColList' }),
-    el('div', { class: 'field-row' },
-      el('button', { class: 'btn', id: 'btnAddOutputCol', onclick: addOutputColumn }, '+ 添加列'),
-      el('button', { class: 'btn', onclick: clearOutputColumns }, '清空'),
-    ),
-  ));
-
-  // ④ 分列设置（从设置弹窗移出，主界面显著展示）
+  // ③ 执行
   app.appendChild(el('div', { class: 'panel', style: '--d:.18s' },
     el('div', { class: 'panel-head' },
-      el('div', { class: 'panel-index' }, '4'),
-      el('div', { class: 'panel-title' }, '分列设置'),
-      el('span', { class: 'panel-tag', id: 'splitModeTag' }, '当前：序号标记'),
-    ),
-    el('div', { class: 'field-row' },
-      el('div', { class: 'form-field' },
-        el('div', { class: 'form-label' }, '分列方式（决定如何把模型答案切分为多个分点列）'),
-        (() => {
-          const s = el('select', { id: 'splitMode' },
-            ...Object.entries(SPLIT_MODES).map(([k, v]) => el('option', { value: k }, v)),
-          );
-          s.value = state.cfg.splitMode || 'marker';
-          s.onchange = () => { state.cfg = saveCfg({ splitMode: s.value }); refreshSplitUI(); };
-          return s;
-        })(),
-      ),
-    ),
-    el('div', { id: 'splitConfigArea' }),
-    el('div', { class: 'field-row' },
-      el('div', { class: 'form-field' },
-        el('div', { class: 'form-label' }, '运行范围'),
-        (() => {
-          const s = el('select', { id: 'skipFilled' },
-            el('option', { value: '1' }, '跳过已填满的行（部分填充的行只补空列）'),
-            el('option', { value: '0' }, '覆盖全部行'),
-          );
-          s.value = state.cfg.skipFilled ? '1' : '0';
-          s.onchange = () => saveCfg({ skipFilled: s.value === '1' });
-          return s;
-        })(),
-      ),
-    ),
-    el('div', { class: 'hint-block', id: 'splitHint' }, ''),
-  ));
-
-  // ⑤ 执行
-  app.appendChild(el('div', { class: 'panel', style: '--d:.22s' },
-    el('div', { class: 'panel-head' },
-      el('div', { class: 'panel-index' }, '5'),
       el('div', { class: 'panel-title' }, '执行'),
+      el('span', { class: 'panel-tag', id: 'splitModeTag' }, ''),
     ),
-    el('div', { class: 'field-row' },
-      el('button', { class: 'btn', id: 'btnTrial', onclick: onTrial }, '试跑首行（预览）'),
-      el('button', { class: 'btn', id: 'btnRetry', onclick: onRetryFailed, disabled: true }, '重跑失败项'),
+    el('div', { class: 'btn-group' },
+      el('button', { class: 'btn', id: 'btnTrial', onclick: onTrial }, '试跑预览'),
+      el('button', { class: 'btn', id: 'btnRetry', onclick: onRetryFailed, disabled: true }, '重跑失败'),
       el('button', { class: 'btn btn-danger', id: 'btnCancel', onclick: onCancelClick, disabled: true }, '取消'),
     ),
     el('button', { class: 'btn btn-primary btn-block', id: 'btnRun', onclick: () => onRun(), disabled: true }, '开始批量生成'),
-    el('div', { class: 'hint-block' }, '先试跑首行确认分点结构，再批量。新列将自动创建为「多行文本」，默认追加在表尾（飞书暂不支持 API 指定列位置，可手动拖动列序）。'),
     el('div', { class: 'progress-wrap', id: 'progressBox' },
       el('div', { class: 'progress-track' }, el('div', { class: 'progress-bar', id: 'progressBar' })),
       el('div', { class: 'progress-meta' },
@@ -172,7 +132,7 @@ function render() {
   // 日志
   app.appendChild(el('div', { class: 'logbox', id: 'logbox', style: '--d:.26s' },
     el('div', { class: 'log-toggle', onclick: toggleLog },
-      el('span', { class: 'chev' }, '▸'),
+      el('span', { class: 'chev' }, iconSvg('chevron', 14)),
       el('span', {}, '运行日志'),
       el('span', { class: 'v' }, 'v' + APP_VERSION),
     ),
@@ -234,7 +194,7 @@ function showError(title, message) {
 function refreshSplitUI() {
   const mode = state.cfg.splitMode || 'marker';
   const tag = $('splitModeTag');
-  if (tag) tag.textContent = '当前：' + (SPLIT_MODES[mode] || mode);
+  if (tag) tag.textContent = '分列 · ' + (SHORT_SPLIT[mode] || mode);
   const area = $('splitConfigArea');
   if (!area) return;
   area.innerHTML = '';
@@ -360,7 +320,7 @@ function renderOutputColumns() {
       el('span', { class: 'output-col-index' }, `${i + 1}`),
       el('div', { class: 'form-field' }, el('div', { class: 'form-label' }, '列名'), nameInp),
       el('div', { class: 'form-field' }, el('div', { class: 'form-label' }, '参考案例（可选）'), exInp),
-      el('button', { class: 'btn btn-danger btn-sm', onclick: () => removeOutputColumn(i), title: '删除' }, '×'),
+      el('button', { class: 'btn btn-danger btn-sm', onclick: () => removeOutputColumn(i), title: '删除列' }, iconSvg('trash', 14)),
     ));
   });
   list.appendChild(grid);
@@ -374,7 +334,7 @@ function openSettings() {
   // 分组：模型配置（服务商 → 模型 → API Key）
   const p = getProvider(cfg.provider);
   const gModel = el('div', { class: 'set-group' },
-    el('div', { class: 'set-group-title' }, '模型配置（仅存本浏览器）'),
+    el('div', { class: 'set-group-title' }, iconSvg('gear', 15), '模型配置'),
     el('div', { class: 'set-grid' },
       // 服务商
       (() => {
@@ -425,9 +385,47 @@ function openSettings() {
       el('button', { class: 'btn', onclick: onVerifyClick }, '验证模型配置'),
     ),
     el('div', { class: 'set-tip' },
-      p.fixedBaseUrl
-        ? `已选「${p.name}」：在 Agnes AI 控制台获取 API Key 后粘贴、并选择模型即可（默认 2.5 Flash）。系统已按官方限流自动设置并发=${p.rateLimit?.maxConc ?? 1}、请求间隔=${p.rateLimit?.minIntervalMs ?? 0}ms，无需手动调整；点击「验证」或「完成」会自动发一次最小请求校验配置；Key 明文存于浏览器 localStorage，不会上传，勿在公共设备保存。`
-        : '选好服务商后，填写 Base URL / API Key / 模型名即可。点击「验证」或「完成」会自动发一次最小请求校验配置；Key 明文存于浏览器 localStorage，不会上传。'),
+      p.fixedBaseUrl ? `已选「${p.name}」：填好 API Key 即可（默认 2.5 Flash），限流已自动配置。` : '填好服务商信息即可，Key 仅存本浏览器、不会上传。'),
+  );
+
+  // 分组：分列设置（迁入设置，主界面只留摘要标签）
+  const gSplit = el('div', { class: 'set-group' },
+    el('div', { class: 'set-group-title' }, iconSvg('sparkle', 15), '分列设置'),
+    el('div', { class: 'form-field full' },
+      el('div', { class: 'form-label' }, '分列方式'),
+      (() => {
+        const s = el('select', { id: 'splitMode' },
+          ...Object.entries(SPLIT_MODES).map(([k, v]) => el('option', { value: k }, v)));
+        s.value = state.cfg.splitMode || 'marker';
+        s.onchange = () => { state.cfg = saveCfg({ splitMode: s.value }); refreshSplitUI(); };
+        return s;
+      })(),
+    ),
+    el('div', { id: 'splitConfigArea' }),
+    el('div', { class: 'form-field full' },
+      el('div', { class: 'form-label' }, '运行范围'),
+      (() => {
+        const s = el('select', { id: 'skipFilled' },
+          el('option', { value: '1' }, '跳过已填满的行（部分填充的行只补空列）'),
+          el('option', { value: '0' }, '覆盖全部行'),
+        );
+        s.value = state.cfg.skipFilled ? '1' : '0';
+        s.onchange = () => saveCfg({ skipFilled: s.value === '1' });
+        return s;
+      })(),
+    ),
+    el('div', { class: 'set-tip', id: 'splitHint' }, ''),
+  );
+
+  // 分组：输出列模板（迁入设置）
+  const gOutput = el('div', { class: 'set-group' },
+    el('div', { class: 'set-group-title' }, iconSvg('plus', 15), '输出列模板'),
+    el('div', { id: 'outputColList' }),
+    el('div', { class: 'field-row', style: 'margin-top:8px' },
+      el('button', { class: 'btn', id: 'btnAddOutputCol', onclick: addOutputColumn }, '添加列'),
+      el('button', { class: 'btn', onclick: clearOutputColumns }, '清空'),
+    ),
+    el('div', { class: 'set-tip' }, '定义列名与参考案例，AI 按此生成；留空则按试跑结果自动建列。'),
   );
 
   // 分组：总要求模板（仅存/删；导入导出在主界面总要求面板）
@@ -437,10 +435,12 @@ function openSettings() {
       el('button', { class: 'btn', onclick: onSaveTemplate }, '存为模板'),
       el('button', { class: 'btn', onclick: onDeleteTemplate }, '删除当前'),
     ),
-    el('div', { class: 'set-tip' }, '模板存于本浏览器，用于快速切换不同总要求；导入 / 导出文档请在主界面「总要求」面板操作。'),
+    el('div', { class: 'set-tip' }, '模板用于快速切换不同总要求；导入 / 导出在「总要求」面板。'),
   );
 
-  content.append(gModel, gTpl);
+  content.append(gModel, gSplit, gOutput, gTpl);
+  refreshSplitUI();
+  renderOutputColumns();
 
   showModal('设置', content, [{ label: '完成', primary: true, onClick: onSettingsDone }]);
 }
@@ -677,7 +677,7 @@ function ensureModelConfig() {
     if (!effectiveBaseUrl && !provider.fixedBaseUrl) missing.push('Base URL');
     if (!cfg.apiKey) missing.push('API Key');
     if (!cfg.model) missing.push(provider.models.length ? '模型' : '模型名');
-    showError('缺少模型配置', missing.length ? `请先在右上角「⚙ 设置」中填写：${missing.join('、')}。` : '模型配置不完整，请检查设置。');
+    showError('缺少模型配置', missing.length ? `请先在右上角「设置」中填写：${missing.join('、')}。` : '模型配置不完整，请检查设置。');
     return null;
   }
   return { ...cfg, baseUrl: effectiveBaseUrl };
