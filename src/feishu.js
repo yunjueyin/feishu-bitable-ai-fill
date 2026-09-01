@@ -91,7 +91,7 @@ export function describeErr(e) {
  * 避免「视图无效/越界」导致整流程卡死（回退后按底层存储顺序，会打 warn 日志）。
  * @returns {Promise<Array<{recordId:string, fields:Object}>>}
  */
-export async function readRecords(table, viewId, { pageSize = 200, maxPages = 2000 } = {}) {
+export async function readRecords(table, viewId, { pageSize = 200, maxPages = 2000, onWarn = null } = {}) {
   if (!table) throw new Error('数据表未加载，请先在「数据源」面板点击「刷新表/字段」');
   const all = [];
   let useView = !!viewId;
@@ -119,7 +119,9 @@ export async function readRecords(table, viewId, { pageSize = 200, maxPages = 20
       if (useView) {
         // 多数「viewId 无效/越界」（来自其它表或已删除视图）会让 getRecordsByPage 报 Table 级错误，
         // 回退到不带 viewId 重试一次（按底层存储顺序），避免整流程卡死。
-        log(`带 viewId 读取记录失败（${describeErr(e)}），自动回退不带 viewId 重试`, 'warn');
+        const warnMsg = `带 viewId 读取记录失败（${describeErr(e)}），自动回退不带 viewId 重试`;
+        if (typeof onWarn === 'function') onWarn(warnMsg);
+        else console.warn(warnMsg);
         useView = false;
         attempt++;
         continue;

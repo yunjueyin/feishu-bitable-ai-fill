@@ -555,7 +555,7 @@ export async function reloadTable() {
 
 /* ---------- 读取行数据 ---------- */
 async function loadRows(columnNames = []) {
-  const records = await readRecords(state.table, state.viewId);
+  const records = await readRecords(state.table, state.viewId, { onWarn: (msg) => log(msg, 'warn') });
   const outIdByName = new Map(state.fields.map((f) => [f.name, f.id]));
   return records.map((rec) => {
     const text = cellToText(rec.fields && rec.fields[state.sourceFieldId]);
