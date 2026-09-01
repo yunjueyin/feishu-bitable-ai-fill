@@ -20,7 +20,9 @@ export async function callLLM(cfg, messages, opts = {}) {
     baseUrl, apiKey, model,
     temperature = 0.7,
     maxTokens = 4096,
-    timeoutMs = 120000,
+    // 60s：Agnes Flash 生成一段分点内容通常 <30s；hang 时快速失败进入重试，
+    // 避免 120s 超时 × 3 次重试 ≈ 6 分钟全程"进度 0 无反馈"。
+    timeoutMs = 60000,
   } = cfg;
   if (!baseUrl) throw new Error('缺少 Base URL');
   if (!apiKey) throw new Error('缺少 API Key');
@@ -49,7 +51,7 @@ export async function callLLM(cfg, messages, opts = {}) {
       if (err.aborted) throw err;
       if (!err.retryable) throw err;
       attempt++;
-      if (attempt > (opts.retries ?? 3)) throw err;
+      if (attempt > (opts.retries ?? 2)) throw err;
       const delay = err.retryAfterMs || 2000 * Math.pow(2, attempt - 1);
       if (opts.onRetry) opts.onRetry(attempt, err, delay);
       await sleep(delay);

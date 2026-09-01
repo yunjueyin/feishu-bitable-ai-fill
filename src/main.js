@@ -15,7 +15,7 @@ import {
 } from './feishu.js';
 import { trialRun, runBatch, retryFailed, batchWriteCells } from './runner.js';
 
-export const APP_VERSION = '20260901e';
+export const APP_VERSION = '20260901f';
 
 const state = {
   cfg: loadCfg(),
@@ -718,8 +718,32 @@ async function onTrial() {
   }
 }
 
-function showPreview(result, firstRow) {
-  const explicitCols = Array.isArray(state.cfg.outputColumns)
+/**
+ * 批量前的试跑确认弹窗（无输出列模板时）：
+ * 展示将创建的列数、每列名与每列内容，用户确认后才继续批量。
+ * @returns {Promise<boolean>} true=确认继续；false=取消中止
+ */
+function confirmColumnsBeforeRun(result, firstRow, columns) {
+  return new Promise((resolve) => {
+    const wrap = el('div', {});
+    wrap.appendChild(el('div', { class: 'hint', style: 'margin-bottom:10px' },
+      `试跑解析出 ${result.segments.length} 个分点（方式=${result.splitMode}）→ 将创建 ${columns.length} 个「多行文本」列。请确认每列内容是否符合预期，确认后开始批量生成。`));
+    columns.forEach((colName, i) => {
+      wrap.appendChild(el('div', { class: 'seg-item' },
+        el('div', { class: 'seg-head' }, el('span', { class: 'badge' }, colName || `输出${i + 1}`)),
+        el('pre', {}, result.segments[i] || '（空）'),
+      ));
+    });
+    wrap.appendChild(el('div', { class: 'hint', style: 'margin-top:10px' },
+      `素材预览：${firstRow.text.slice(0, 100)}…（列数或内容不对？点「取消」去调整总要求/分列方式，或改用「输出列模板」固定列。）`));
+    showModal('确认输出列（试跑首行结果）', wrap, [
+      { label: '取消，我去调整', onClick: () => resolve(false) },
+      { label: `确认 ${columns.length} 列，开始批量`, primary: true, onClick: () => resolve(true) },
+    ]);
+  });
+}
+
+function showPreview(result, firstRow) {  const explicitCols = Array.isArray(state.cfg.outputColumns)
     ? state.cfg.outputColumns.filter((c) => String(c.name || '').trim())
     : [];
   // 有模板时严格按模板列数/名称展示；无模板时按解析出的分点数
@@ -774,10 +798,20 @@ function makeDeps(cfg) {
     splitCfg,
     outputColumns,
     minIntervalMs: rateLimit ? rateLimit.minIntervalMs : 0,
-    callModel: async (messages, { shouldAbort }) => callLLM(cfg, messages, {
-      shouldAbort,
-      onRetry: (attempt, err, delay) => log(`模型请求第 ${attempt} 次重试（${err.message.slice(0, 80)}），${(delay / 1000).toFixed(0)}s 后…`, 'warn'),
-    }),
+    callModel: async (messages, { shouldAbort }) => {
+      const t0 = Date.now();
+      try {
+        const r = await callLLM(cfg, messages, {
+          shouldAbort,
+          onRetry: (attempt, err, delay) => log(`模型请求第 ${attempt} 次重试（${String(err.message || err).slice(0, 80)}），${(delay / 1000).toFixed(0)}s 后…`, 'warn'),
+        });
+        return r;
+      } catch (e) {
+        // 失败时带耗时落日志：卡进度时用户可直接看到具体错误与耗时
+        log(`模型调用失败（${((Date.now() - t0) / 1000).toFixed(1)}s）：${String(e && e.message || e).slice(0, 160)}`, 'err');
+        throw e;
+      }
+    },
     ensureColumns: (names) => ensureColumns(state.table, names),
     writeCells: (items, opts) => batchWriteCells({
       items,
@@ -829,10 +863,20 @@ async function onRun(presetColumns = null) {
         // 未填模板：需先试跑首行确定输出列数（仅 1 次 AI 调用），显式提示"试跑中"
         setProgress(0, 1, 'trial');
         log('未配置输出列模板：先试跑首行以确定输出列数…');
-        const tr = await trialRun(makeDeps(cfg), first.text);
+        const trialDeps = makeDeps(cfg);
+        const tTrial = Date.now();
+        const tr = await trialRun(trialDeps, first.text);
+        log(`试跑首行完成（${((Date.now() - tTrial) / 1000).toFixed(1)}s），解析出 ${tr.segments.length} 个分点`);
         if (!tr.segments.length) throw new Error('首行解析出 0 个分点，请先调整要求（试跑预览可查看模型原始输出）');
         columns = tr.segments.map((_, i) => `输出${i + 1}`);
-        log(`未配置输出列模板，按首行解析结果自动建 ${columns.length} 列`, 'warn');
+        // 【确认门】试跑结果弹窗：用户确认列数与每列输出后才继续批量；取消则中止
+        const ok = await confirmColumnsBeforeRun(tr, first, columns);
+        if (!ok) {
+          log('已取消：在试跑确认弹窗中止批量（列数/内容未确认）', 'warn');
+          setRunning(false);
+          return;
+        }
+        log(`已确认 ${columns.length} 列：[${columns.join(', ')}]`);
       }
     }
     state.lastColumns = columns;
