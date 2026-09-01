@@ -1,0 +1,19 @@
+{
+  "name": "feishu-bitable-ai-fill",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "飞书多维表自定义插件：按总要求逐行调用 AI 生成分点内容，自动建列并批量写回",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node test_runner.mjs"
+  },
+  "dependencies": {
+    "@lark-base-open/js-sdk": "^1.0.2"
+  },
+  "devDependencies": {
+    "vite": "^5.4.10"
+  }
+}

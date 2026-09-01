@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>飞书写入格式探针（AI 批量填表插件）</title>
+<style>
+  body{font-family:-apple-system,'Segoe UI',Roboto,'Microsoft YaHei',sans-serif;margin:0;padding:16px;background:#f5f6f8;color:#1f2329}
+  h1{font-size:18px;margin:0 0 4px}
+  .sub{color:#646a73;font-size:13px;margin-bottom:12px}
+  button{font-size:15px;padding:10px 18px;border:0;border-radius:8px;background:#3370ff;color:#fff;cursor:pointer}
+  button:disabled{opacity:.5;cursor:default}
+  #out{margin-top:14px;background:#fff;border-radius:10px;padding:12px 14px;font:13px/1.7 ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-all;max-height:60vh;overflow:auto}
+  .row{padding:2px 0;border-bottom:1px dashed #eee}
+  .err{color:#d83931}.ok{color:#2ea121}.warn{color:#bb7a00}.info{color:#3370ff}
+</style>
+</head>
+<body>
+<h1>飞书写入格式探针</h1>
+<div class="sub">实测本插件依赖的 5 个未知项：addField 返回结构 / 写文本（字符串 vs 富文本数组）/ 读多行文本结构 / getRecordsByPage(viewId+stringValue) / 建列后立即写的延迟容忍。请在目标多维表的插件环境中打开本页并点击按钮。</div>
+<button id="run">① 开始探测</button>
+<div id="out"></div>
+
+<script type="module">
+const $out = document.getElementById('out');
+function log(msg, type) {
+  const d = document.createElement('div');
+  d.className = 'row' + (type ? ' ' + type : '');
+  d.textContent = msg;
+  $out.appendChild(d);
+  $out.scrollTop = $out.scrollHeight;
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function main() {
+  document.getElementById('run').disabled = true;
+  $out.innerHTML = '';
+  try {
+    // 1. SDK
+    log('① 加载 SDK…');
+    const { bitable } = await import('@lark-base-open/js-sdk');
+    log('  SDK 加载成功', 'ok');
+
+    // 2. 表与视图字段
+    const sel = await bitable.base.getSelection();
+    const table = await bitable.base.getTableById(sel.tableId);
+    log('  tableId=' + sel.tableId + (sel.viewId ? ' viewId=' + sel.viewId : '（无 viewId）'), 'info');
+    const viewId = sel.viewId || (await table.getActiveView().catch(() => null));
+    const metas = await table.getFieldMetaList();
+    const textFields = metas.filter((m) => m.type === 1);
+    log('  字段总数=' + metas.length + '，多行文本(type=1)字段=' + textFields.map((f) => f.name).join('、'), 'info');
+    if (!textFields.length) { log('  缺少多行文本字段，部分探测跳过', 'warn'); }
+
+    // 3. 分页读取（viewId + stringValue）
+    log('② getRecordsByPage({pageSize:5, viewId, stringValue:true})…');
+    const params = { pageSize: 5, stringValue: true };
+    if (viewId) params.viewId = viewId;
+    const resp = await table.getRecordsByPage(params);
+    const recs = resp.records || [];
+    log('  返回 ' + recs.length + ' 条，hasMore=' + resp.hasMore, 'info');
+    if (recs.length) {
+      log('  首条 recordId=' + recs[0].recordId, 'info');
+      log('  首条 fields 原始结构：' + JSON.stringify(recs[0].fields).slice(0, 600), 'info');
+    }
+
+    // 4. 临时列 + 写入格式实测
+    log('③ 建临时列（type:1 多行文本）…');
+    const probeName = 'probe_' + Date.now().toString(36);
+    const addRes = await table.addField({ type: 1, name: probeName });
+    log('  addField 原始返回：' + JSON.stringify(addRes) + '  typeof=' + typeof addRes, 'info');
+    let fid = null;
+    if (typeof addRes === 'string' && addRes.trim()) fid = addRes.trim();
+    else if (addRes && typeof addRes === 'object') fid = addRes.id || addRes.fieldId || (addRes.field && addRes.field.id) || (addRes.data && addRes.data.id);
+    if (!fid) throw new Error('addField 未返回字段 id，后续写回探测无法进行');
+    log('  归一化 fieldId=' + fid, 'ok');
+
+    const target = recs[0];
+    if (!target) { log('  表内无记录，跳过写入探测（请先加一行数据）', 'warn'); return; }
+    const rid = target.recordId;
+
+    log('④ 延迟容忍实测：建列后立即以字符串格式写入并读回…');
+    const formats = [
+      { label: '字符串 "probe-str-立即"', value: 'probe-str-立即' },
+      { label: '富文本数组 [{type:text}]', value: [{ type: 'text', text: 'probe-rt-立即' }] },
+    ];
+    for (const f of formats) {
+      try {
+        await table.setCellValue(fid, rid, f.value);
+        const back = await table.getCellValue(fid, rid);
+        log('  ' + f.label + ' → 写入成功，读回=' + JSON.stringify(back), 'ok');
+      } catch (e) {
+        log('  ' + f.label + ' → 失败：' + e.message, 'err');
+      }
+    }
+
+    log('⑤ 延迟梯度实测（每次写入后立即读回验证）…');
+    for (const ms of [0, 500, 1000, 2000]) {
+      if (ms) await sleep(ms);
+      try {
+        await table.setCellValue(fid, rid, 'delay-' + ms + 'ms');
+        const back = await table.getCellValue(fid, rid);
+        const ok = back && JSON.stringify(back).includes('delay-' + ms);
+        log('  建列后等待 ' + ms + 'ms 写入 → ' + (ok ? '读回一致' : '读回=' + JSON.stringify(back)), ok ? 'ok' : 'warn');
+        break; // 第一次成功即停（说明该延迟足够）
+      } catch (e) {
+        log('  建列后等待 ' + ms + 'ms 写入 → 失败：' + e.message, 'warn');
+      }
+    }
+
+    log('⑥ 清理：删除临时列 ' + probeName);
+    try { await table.deleteField(fid); log('  已删除', 'ok'); }
+    catch (e) { log('  删除失败（请手动删除）：' + e.message, 'warn'); }
+
+    log('=== 探测结束 ===', 'ok');
+  } catch (e) {
+    log('探测异常：' + (e && e.stack ? e.stack : e), 'err');
+  } finally {
+    document.getElementById('run').disabled = false;
+  }
+}
+document.getElementById('run').addEventListener('click', () => main());
+</script>
+</body>
+</html>

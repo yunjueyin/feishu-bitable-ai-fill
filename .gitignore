@@ -1,0 +1,5 @@
+node_modules/
+dist/
+deploy-package.zip
+*.log
+.DS_Store
