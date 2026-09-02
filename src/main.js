@@ -15,7 +15,7 @@ import {
 } from './feishu.js';
 import { trialRun, runBatch, retryFailed, batchWriteCells } from './runner.js';
 
-export const APP_VERSION = '20260902e';
+export const APP_VERSION = '20260902f';
 
 const state = {
   cfg: loadCfg(),
@@ -289,13 +289,17 @@ function refreshSplitUI() {
   } else if (mode === 'paragraph') {
     const inp = el('input', { type: 'text', value: state.cfg.sep || '---', placeholder: '段落分隔符，如 ---、***、===' });
     inp.addEventListener('input', () => saveCfg({ sep: inp.value }));
+    const quick = (label, sep, title) => el('button', {
+      class: 'btn', title,
+      onclick: () => { inp.value = sep; saveCfg({ sep }); },
+    }, label);
     area.appendChild(el('div', { class: 'form-field full' },
       el('div', { class: 'form-label' }, '段落分隔符（模型输出中用于切分各分点）'),
       el('div', { class: 'field-row' },
         inp,
-        el('button', { class: 'btn', onclick: () => { inp.value = '---'; saveCfg({ sep: '---' }); } }, '---'),
-        el('button', { class: 'btn', onclick: () => { inp.value = '***'; saveCfg({ sep: '***' }); } }, '***'),
-        el('button', { class: 'btn', onclick: () => { inp.value = '==='; saveCfg({ sep: '===' }); } }, '==='),
+        quick('三横线', '---', '快捷填入分隔符：三个短横线 ---'),
+        quick('三星号', '***', '快捷填入分隔符：三个星号 ***'),
+        quick('三等号', '===', '快捷填入分隔符：三个等号 ==='),
       ),
     ));
   } else if (mode === 'heading') {
@@ -388,13 +392,18 @@ function buildSplitCfgEditor(mode) {
   if (mode === 'paragraph') {
     const inp = el('input', { type: 'text', value: state.cfg.sep || '---', placeholder: '段落分隔符，如 ---、***、===' });
     inp.addEventListener('input', () => saveCfg({ sep: inp.value }));
+    // 快捷按钮用文字描述而非直接展示符号（用户要求）；实际填入的分隔符见 input
+    const quick = (label, sep, title) => el('button', {
+      class: 'btn', title,
+      onclick: () => { inp.value = sep; saveCfg({ sep }); },
+    }, label);
     return el('div', { class: 'form-field full' },
       el('div', { class: 'form-label' }, '段落分隔符（模型输出中用于切分各分点）'),
       el('div', { class: 'field-row' },
         inp,
-        el('button', { class: 'btn', onclick: () => { inp.value = '---'; saveCfg({ sep: '---' }); } }, '---'),
-        el('button', { class: 'btn', onclick: () => { inp.value = '***'; saveCfg({ sep: '***' }); } }, '***'),
-        el('button', { class: 'btn', onclick: () => { inp.value = '==='; saveCfg({ sep: '===' }); } }, '==='),
+        quick('三横线', '---', '快捷填入分隔符：三个短横线 ---'),
+        quick('三星号', '***', '快捷填入分隔符：三个星号 ***'),
+        quick('三等号', '===', '快捷填入分隔符：三个等号 ==='),
       ),
     );
   }
