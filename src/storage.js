@@ -10,7 +10,11 @@ export const CFG_VERSION = 1;
 /**
  * 服务商预设。用户只需「选服务商 → 选模型 → 填 API Key」。
  * 固定 Base URL 的服务商（fixedBaseUrl=true）会锁定 Base URL，用户不必填写。
- * 数据均来自官方文档：https://agnes-ai.cn/zh-Hans/docs/agnes-25-flash 、 /agnes-25-pro
+ * 资料来源（2026-09 核实）：
+ *  - Agnes AI：https://agnes-ai.cn/zh-Hans/docs/agnes-25-flash 、 /agnes-25-pro
+ *  - DeepSeek：https://api-docs.deepseek.com/zh-cn/ （V4 系列；deepseek-chat/reasoner 已于 2026-07-24 弃用）
+ *  - 豆包/火山方舟：https://www.volcengine.com/docs/82379 （OpenAI 兼容 /api/v3；模型可直传模型名，接入点 ep-xxx 走自定义）
+ *  - B.AI（Bank of AI）：https://docs.bankofai.io/zh-Hans/llmservice/api/ （OpenAI 兼容 /v1/chat/completions）
  */
 export const PROVIDERS = [
   {
@@ -27,6 +31,55 @@ export const PROVIDERS = [
     // 官方限流：免费/默认用户文本模型 Allowed RPM 30 / Effective RPM 20。
     // 保守起见：并发固定 1，请求间隔 ≥ 3.5 秒，确保不触发限流。
     rateLimit: { maxConc: 1, minIntervalMs: 3500 },
+    tip: '已选「Agnes AI」：填好 API Key 即可（默认 2.5 Flash），限流已自动配置。',
+  },
+  {
+    id: 'deepseek',
+    name: 'DeepSeek（官方）',
+    baseUrl: 'https://api.deepseek.com',
+    fixedBaseUrl: true,
+    docUrl: 'https://api-docs.deepseek.com/zh-cn/',
+    models: [
+      { value: 'deepseek-v4-flash', label: 'V4 Flash（默认 · 快速经济 · 1M 上下文）' },
+      { value: 'deepseek-v4-pro', label: 'V4 Pro（旗舰 · 强推理/Agent · 1M 上下文）' },
+    ],
+    defaultModel: 'deepseek-v4-flash',
+  },
+  {
+    id: 'doubao',
+    name: '豆包（火山方舟）',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    fixedBaseUrl: true,
+    docUrl: 'https://www.volcengine.com/docs/82379',
+    models: [
+      { value: 'doubao-seed-1.6', label: 'Seed 1.6（默认 · 通用 · 256K）' },
+      { value: 'doubao-seed-1.6-thinking', label: 'Seed 1.6 Thinking（深度推理 · 256K）' },
+      { value: 'doubao-1.5-pro-32k', label: '1.5 Pro 32K（低成本通用）' },
+      { value: 'doubao-1.5-lite-32k', label: '1.5 Lite 32K（轻量极速）' },
+    ],
+    defaultModel: 'doubao-seed-1.6',
+    tip: '已选「豆包」：需在火山方舟开通模型服务并创建 API Key。若报「模型不存在」，请到方舟「在线推理」创建推理接入点，改选「自定义」服务商并填入接入点 ID（ep-xxx）。',
+  },
+  {
+    id: 'bai',
+    name: 'B.AI（聚合平台）',
+    baseUrl: 'https://api.b.ai/v1',
+    fixedBaseUrl: true,
+    docUrl: 'https://docs.bankofai.io/zh-Hans/llmservice/api/',
+    models: [
+      { value: 'gpt-5.2', label: 'GPT-5.2（OpenAI 旗舰）' },
+      { value: 'gpt-5-mini', label: 'GPT-5 Mini（高频低延迟）' },
+      { value: 'gpt-5-nano', label: 'GPT-5 Nano（微型任务）' },
+      { value: 'claude-opus-4.6', label: 'Claude Opus 4.6（强推理旗舰）' },
+      { value: 'claude-sonnet-4.6', label: 'Claude Sonnet 4.6（均衡）' },
+      { value: 'claude-haiku-4.5', label: 'Claude Haiku 4.5（极速）' },
+      { value: 'deepseek-v3.2', label: 'DeepSeek V3.2（国产高性价比 · 默认）' },
+      { value: 'glm-5', label: 'GLM-5（国产 · 中文强）' },
+      { value: 'kimi-k2.5', label: 'Kimi K2.5（国产 · 长文本）' },
+      { value: 'minimax-m2.5', label: 'MiniMax M2.5（国产 · 通用）' },
+    ],
+    defaultModel: 'deepseek-v3.2',
+    tip: '已选「B.AI」：一个 Key 可调 GPT / Claude / Gemini / DeepSeek 等多模型，注册即送免费积分。',
   },
   {
     id: 'custom',

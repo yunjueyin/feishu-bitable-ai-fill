@@ -15,7 +15,7 @@ import {
 } from './feishu.js';
 import { trialRun, runBatch, retryFailed, batchWriteCells } from './runner.js';
 
-export const APP_VERSION = '20260902a';
+export const APP_VERSION = '20260902b';
 
 const state = {
   cfg: loadCfg(),
@@ -385,7 +385,7 @@ function openSettings() {
       el('button', { class: 'btn', onclick: onVerifyClick }, '验证模型配置'),
     ),
     el('div', { class: 'set-tip' },
-      p.fixedBaseUrl ? `已选「${p.name}」：填好 API Key 即可（默认 2.5 Flash），限流已自动配置。` : '填好服务商信息即可，Key 仅存本浏览器、不会上传。'),
+      p.tip || (p.fixedBaseUrl ? `已选「${p.name}」：填好 API Key 即可使用。` : '填好服务商信息即可，Key 仅存本浏览器、不会上传。')),
   );
 
   // 分组：分列设置（迁入设置，主界面只留摘要标签）
