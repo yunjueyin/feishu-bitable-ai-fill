@@ -20,9 +20,13 @@ export const FORMAT_CONTRACT = [
  */
 export function formatContract(cfg = {}, outputColumns = []) {
   const { splitMode = 'marker', marker = '【1】', sep = '---', headingLevel = '##' } = cfg;
+/** 通用禁令：输出内容禁止用 markdown 符号表示分行/分段/列表/强调（写回单元格会带脏符号） */
+const NO_MARKDOWN_RULE = '- 严禁使用任何 Markdown 符号表示分行、分段、列表或强调：不要输出 #、##、***、**、*、- 、——— 等符号，分点内部直接写纯文本正文，不要用符号另起小标题或列表；';
+
   const head = '输出格式（必须严格遵守）：';
   const tail = [
     '- 第一行直接输出第一个分点，不要任何开场白、思考过程或说明文字；',
+    NO_MARKDOWN_RULE,
     '- 除分点外，不要输出任何解释、前言、总结或多余文字；',
     '- 不要使用 markdown 代码块包裹。',
   ];
@@ -50,6 +54,7 @@ export function formatContract(cfg = {}, outputColumns = []) {
     return [head,
       `- 每个分点以 Markdown 标题开头，固定用「${lv} 分点标题」形式，如 ${lv} 卖点、${lv} 场景；`,
       '- 标题之后紧跟该分点内容，分点内部可以换行；',
+      `- 唯一例外：分点开头的「${lv} 标题」行允许使用 # 号；标题之后的内容仍严禁再用 #、*、- 等任何 Markdown 符号；`,
       ...tail,
       ...colLines,
     ].join('\n');

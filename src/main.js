@@ -15,7 +15,7 @@ import {
 } from './feishu.js';
 import { trialRun, runBatch, retryFailed, batchWriteCells } from './runner.js';
 
-export const APP_VERSION = '20260902d';
+export const APP_VERSION = '20260902e';
 
 const state = {
   cfg: loadCfg(),
@@ -117,7 +117,7 @@ function render() {
   app.appendChild(el('div', { class: 'panel', style: '--d:.18s' },
     el('div', { class: 'panel-head' },
       el('div', { class: 'panel-title' }, '执行'),
-      el('span', { class: 'panel-tag', id: 'splitModeTag' }, ''),
+      el('button', { class: 'panel-tag panel-tag-btn', id: 'splitModeTag', onclick: openSplitModal, title: '点击选择分列依据' }, ''),
     ),
     el('div', { class: 'btn-group' },
       el('button', { class: 'btn', id: 'btnTrial', onclick: onTrial }, '试跑预览'),
@@ -323,6 +323,95 @@ function refreshSplitUI() {
     };
     hint.textContent = hints[mode] || '';
   }
+}
+
+/* ---------- 分列依据快捷弹窗（主界面「分列 · xx」标签点开，免进设置） ---------- */
+function updateSplitTag() {
+  const tag = $('splitModeTag');
+  if (tag) tag.textContent = '分列 · ' + (SHORT_SPLIT[state.cfg.splitMode || 'marker'] || state.cfg.splitMode || '');
+}
+
+function openSplitModal() {
+  let mode = state.cfg.splitMode || 'marker';
+  const wrap = el('div', {});
+  const optGrid = el('div', { class: 'split-opt-grid' });
+  const cfgArea = el('div', { style: 'margin-top:12px' });
+
+  const syncActive = () => optGrid.querySelectorAll('.split-opt')
+    .forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
+  const renderCfg = () => { cfgArea.innerHTML = ''; cfgArea.appendChild(buildSplitCfgEditor(mode)); };
+
+  Object.entries(SPLIT_MODES).forEach(([k, label]) => {
+    optGrid.appendChild(el('button', {
+      class: 'split-opt', 'data-mode': k,
+      onclick: () => {
+        mode = k;
+        state.cfg = saveCfg({ splitMode: k });
+        syncActive(); renderCfg(); updateSplitTag();
+      },
+    }, label));
+  });
+
+  wrap.append(optGrid, cfgArea);
+  syncActive();
+  renderCfg();
+  showModal('分列依据', wrap, [{ label: '完成', primary: true }]);
+}
+
+/** 快捷弹窗内的分列配置编辑器（独立 DOM，不复用设置弹窗的全局 id，避免堆叠冲突） */
+function buildSplitCfgEditor(mode) {
+  if (mode === 'marker') {
+    const s = el('select', {},
+      el('option', { value: '【1】' }, '【1】【2】…（推荐）'),
+      el('option', { value: '[1]' }, '[1] [2]…'),
+      el('option', { value: '1.' }, '1. 2.…'),
+      el('option', { value: '一、' }, '一、二、…'),
+      el('option', { value: '__custom__' }, '自定义正则…'),
+    );
+    s.value = state.cfg.marker || '【1】';
+    const customWrap = el('div', {});
+    const renderCustom = () => {
+      customWrap.innerHTML = '';
+      const inp = el('input', { type: 'text', value: state.cfg.marker || '', placeholder: '如 §1 §2 或直接写正则（数字用 \\d）' });
+      inp.addEventListener('input', () => saveCfg({ marker: inp.value.trim() || '【1】' }));
+      customWrap.appendChild(el('div', { class: 'form-field full', style: 'margin-top:10px' },
+        el('div', { class: 'form-label' }, '自定义标记（支持正则，数字用 \\d）'), inp));
+    };
+    s.addEventListener('change', () => {
+      if (s.value === '__custom__') renderCustom();
+      else { saveCfg({ marker: s.value }); customWrap.innerHTML = ''; }
+    });
+    if (s.value === '__custom__') renderCustom();
+    return el('div', { class: 'form-field full' },
+      el('div', { class: 'form-label' }, '分列标记样式（模型依此序号标记分段）'), s, customWrap);
+  }
+  if (mode === 'paragraph') {
+    const inp = el('input', { type: 'text', value: state.cfg.sep || '---', placeholder: '段落分隔符，如 ---、***、===' });
+    inp.addEventListener('input', () => saveCfg({ sep: inp.value }));
+    return el('div', { class: 'form-field full' },
+      el('div', { class: 'form-label' }, '段落分隔符（模型输出中用于切分各分点）'),
+      el('div', { class: 'field-row' },
+        inp,
+        el('button', { class: 'btn', onclick: () => { inp.value = '---'; saveCfg({ sep: '---' }); } }, '---'),
+        el('button', { class: 'btn', onclick: () => { inp.value = '***'; saveCfg({ sep: '***' }); } }, '***'),
+        el('button', { class: 'btn', onclick: () => { inp.value = '==='; saveCfg({ sep: '===' }); } }, '==='),
+      ),
+    );
+  }
+  if (mode === 'heading') {
+    const s = el('select', {},
+      el('option', { value: '#' }, '一级 #'),
+      el('option', { value: '##' }, '二级 ##（推荐）'),
+      el('option', { value: '###' }, '三级 ###'),
+    );
+    s.value = state.cfg.headingLevel || '##';
+    s.addEventListener('change', () => saveCfg({ headingLevel: s.value }));
+    return el('div', { class: 'form-field full' },
+      el('div', { class: 'form-label' }, '标题级别（每段以该级 Markdown 标题开头）'), s);
+  }
+  // blank
+  return el('div', { class: 'hint', style: 'margin-top:4px' },
+    '空行分列：模型输出中每个分点之间用「一个空行」分隔，无需额外配置。');
 }
 
 /* ---------- 输出列模板 ---------- */

@@ -12,6 +12,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * 写回前清洗单个分点：去掉开头的序号标记（如【1】/ [1]）与「列名：」前缀，
  * 避免模型输出的标记/列名混进单元格内容（用户反馈"内容不对"的主因之一）。
  * 「1.」「一、」样式只在用户显式选了该标记样式时才清洗，避免误伤"3.5万"这类正文开头。
+ * 同时剥离模型惯性输出的 Markdown 残留（# 标题号、行首星号/横线列表符、段首 --- 等分隔线、整段 **加粗**），
+ * 用户要求：输出内容不可以用井号或星号表示分行/分段。
  */
 export function cleanSegment(seg, colName, splitCfg = {}) {
   let s = String(seg || '').trim();
@@ -24,6 +26,16 @@ export function cleanSegment(seg, colName, splitCfg = {}) {
     if (marker === '1.') s = s.replace(/^\d+[.、]\s*/, '');
     if (marker === '一、') s = s.replace(/^[一二三四五六七八九十]+、\s*/, '');
   }
+  // heading 模式的标题行是用户显式约定的分列依据，保留；其余模式剥离行首 # 标题号
+  if (mode !== 'heading') {
+    s = s.replace(/^#{1,6}\s+/gm, '');
+  }
+  // 剥离段首的分隔线残留（模型惯性输出的 ---、***、=== 独立行）
+  s = s.replace(/^\s*(?:-{3,}|\*{3,}|={3,}|[—─＿_]{2,})\s*\n?/, '');
+  // 剥离行首列表符号（* 、- 、• 、· ；要求符号后有空格，避免误伤 "-5°C" 类正文）
+  s = s.replace(/^[ \t]*(?:\*|•|·|-)[ \t]+/gm, '');
+  // 剥离整段加粗装饰（模型把整个分点包成 **…** 时去掉星号）
+  s = s.replace(/^\*\*([\s\S]+)\*\*$/, '$1').trim();
   // 开头「列名：」/「列名:」前缀
   const name = String(colName || '').trim();
   if (name) {

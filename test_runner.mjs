@@ -302,6 +302,17 @@ function makeDeps(over = {}) {
   check('cleanSegment 无配置兜底', cleanSegment('【2】乙', '输出1', {}) === '乙');
 }
 {
+  // markdown 残留清洗（用户要求：内容不可以用井号或星号表示分行/分段）
+  check('cleanSegment 剥行首 # 标题号', cleanSegment('## 卖点一\n性价比高', '输出1', { splitMode: 'marker' }) === '卖点一\n性价比高');
+  check('cleanSegment 剥行首 * 列表符', cleanSegment('* 亮点A\n* 亮点B', '输出1', { splitMode: 'marker' }) === '亮点A\n亮点B');
+  check('cleanSegment 剥行首 - 列表符', cleanSegment('- 场景一\n- 场景二', '输出1', { splitMode: 'marker' }) === '场景一\n场景二');
+  check('cleanSegment 剥段首 --- 分隔线残留', cleanSegment('---\n正文内容', '输出1', { splitMode: 'marker' }) === '正文内容');
+  check('cleanSegment 剥整段 **加粗** 装饰', cleanSegment('**核心卖点**', '输出1', { splitMode: 'marker' }) === '核心卖点');
+  check('cleanSegment 不误伤 -5°C 负号', cleanSegment('-5°C 低温测试通过', '输出1', { splitMode: 'marker' }) === '-5°C 低温测试通过');
+  check('cleanSegment 不误伤 3*3 乘号', cleanSegment('3*3=9', '输出1', { splitMode: 'marker' }) === '3*3=9');
+  check('cleanSegment heading 模式保留标题行', cleanSegment('## 卖点\n内容', '输出1', { splitMode: 'heading', headingLevel: '##' }) === '## 卖点\n内容');
+}
+{
   let aborted = false;
   const deps = makeDeps({
     callModel: async () => { aborted = true; throw Object.assign(new Error('x'), { aborted: true }); },

@@ -191,6 +191,23 @@ textarea { resize: vertical; line-height: 1.6; }
 /* ---------- 提示文字（极简） ---------- */
 .hint { font-size: 12px; color: var(--muted); line-height: 1.5; }
 .panel-tag { font-size: 11px; color: var(--primary); background: var(--primary-weak); padding: 3px 10px; border-radius: 99px; font-weight: 500; }
+/* 分列标签按钮化：可点击打开「分列依据」弹窗 */
+.panel-tag-btn { border: none; font-family: inherit; cursor: pointer; transition: background .18s var(--ease), transform .18s var(--ease), box-shadow .18s var(--ease); }
+.panel-tag-btn:hover { background: #dfe8ff; transform: translateY(-1px); box-shadow: 0 3px 8px rgba(51, 112, 255, .14); }
+.panel-tag-btn:active { transform: translateY(0); }
+
+/* 分列依据弹窗：选项卡片组 */
+.split-opt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.split-opt {
+  padding: 11px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
+  background: #fff; color: var(--text); font-size: 13px; font-weight: 500; cursor: pointer; font-family: inherit;
+  transition: border-color .18s var(--ease), background .18s var(--ease), color .18s var(--ease), box-shadow .18s var(--ease);
+}
+.split-opt:hover { border-color: var(--primary); color: var(--primary); }
+.split-opt.active {
+  border-color: var(--primary); background: var(--primary-weak); color: var(--primary);
+  font-weight: 600; box-shadow: 0 0 0 3px rgba(51, 112, 255, .10);
+}
 .set-tip { font-size: 11.5px; color: var(--muted); margin-top: 9px; line-height: 1.55; }
 
 /* ---------- 进度 ---------- */
