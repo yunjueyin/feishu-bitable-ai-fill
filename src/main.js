@@ -8,14 +8,14 @@ import {
   PROVIDERS, getProvider,
 } from './storage.js';
 import { callLLM, verifyModel } from './llm.js';
-import { cellToText, SPLIT_MODES } from './parser.js';
+import { cellToText, SPLIT_MODES, stripThink } from './parser.js';
 import {
   getTableById, loadViewFields, readRecords, describeErr,
   ensureColumns, writeTextCell, listTables, getActiveTable,
 } from './feishu.js';
 import { trialRun, runBatch, retryFailed, batchWriteCells } from './runner.js';
 
-export const APP_VERSION = '20260902g';
+export const APP_VERSION = '20260902h';
 
 const state = {
   cfg: loadCfg(),
@@ -29,6 +29,8 @@ const state = {
   lastRows: null,
   lastColumns: null,
   t0: 0,
+  // 模型原始输出记录（最新在前，cap 30 条；思考过程已剔除），供「模型输出」查看区排查切分问题
+  modelOutputs: [],
 };
 
 const $ = (id) => document.getElementById(id);
@@ -53,6 +55,7 @@ const ICONS = {
   down: '<path d="M12 5v14M19 12l-7 7-7-7"/>',
   copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>',
   x: '<path d="M18 6L6 18M6 6l12 12"/>',
+  file: '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>',
 };
 function iconSvg(name, size = 16) {
   const span = el('span', { class: 'ic' });
@@ -143,6 +146,7 @@ function render() {
       el('span', {}, '运行日志'),
       el('span', { class: 'v' }, 'v' + APP_VERSION),
       el('div', { class: 'log-actions' },
+        el('button', { class: 'icon-btn', title: '模型原始输出（排查分列用）', onclick: (e) => { e.stopPropagation(); openModelOutputs(); } }, iconSvg('file', 14)),
         el('button', { class: 'icon-btn', title: '复制日志', onclick: (e) => { e.stopPropagation(); copyLog(); } }, iconSvg('copy', 14)),
         el('button', { class: 'icon-btn', title: '清空日志', onclick: (e) => { e.stopPropagation(); clearLog(); } }, iconSvg('x', 14)),
       ),
@@ -178,6 +182,40 @@ function logNode(node) {
 function clearLog() {
   const box = $('log');
   if (box) box.innerHTML = '';
+}
+
+/**
+ * 模型原始输出查看区：专门展示每次调用模型返回的完整内容（思考过程已剔除），
+ * 用于排查"切分不对"类问题——对比原始输出与解析结果即可定位是模型没按格式输出还是解析问题。
+ */
+function openModelOutputs() {
+  const wrap = el('div', {});
+  wrap.appendChild(el('div', { class: 'hint', style: 'margin-bottom:10px' },
+    '每次调用模型返回的完整内容（思考过程已自动剔除），最新在最上。配合「试跑预览」对比原始输出与解析结果，即可定位切分问题。'));
+  if (!state.modelOutputs.length) {
+    wrap.appendChild(el('div', { class: 'hint', style: 'margin:16px 0;text-align:center' },
+      '暂无记录。试跑预览或批量生成后，这里会显示每次模型返回的完整内容。'));
+  } else {
+    state.modelOutputs.forEach((it, i) => {
+      const pre = el('pre', { class: 'model-out-pre' }, it.raw || '（空）');
+      wrap.appendChild(el('div', { class: 'seg-item' },
+        el('div', { class: 'seg-head' },
+          el('span', { class: 'badge' }, `#${state.modelOutputs.length - i}`),
+          el('span', { class: 'hint' }, `${it.ts} · ${it.dur}s · ${it.raw.length} 字`),
+          el('button', {
+            class: 'icon-btn', title: '复制本次输出', style: 'margin-left:auto;width:26px;height:26px',
+            onclick: () => {
+              const done = () => showToast('已复制本次输出');
+              if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(it.raw).then(done).catch(() => fallbackCopy(it.raw, done));
+              else fallbackCopy(it.raw, done);
+            },
+          }, iconSvg('copy', 13)),
+        ),
+        pre,
+      ));
+    });
+  }
+  showModal('模型原始输出', wrap, [{ label: '关闭', primary: true }]);
 }
 
 function copyLog() {
@@ -1079,6 +1117,13 @@ function makeDeps(cfg) {
           shouldAbort,
           onRetry: (attempt, err, delay) => log(`模型请求第 ${attempt} 次重试（${String(err.message || err).slice(0, 80)}），${(delay / 1000).toFixed(0)}s 后…`, 'warn'),
         });
+        // 记录模型原始输出（剔思考过程），供「模型输出」查看区排查切分问题
+        state.modelOutputs.unshift({
+          ts: new Date().toLocaleTimeString(),
+          dur: ((Date.now() - t0) / 1000).toFixed(1),
+          raw: stripThink(String(r || '')),
+        });
+        if (state.modelOutputs.length > 30) state.modelOutputs.pop();
         return r;
       } catch (e) {
         // 失败时带耗时落日志：卡进度时用户可直接看到具体错误与耗时

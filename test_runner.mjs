@@ -73,7 +73,17 @@ console.log('# parser');
 console.log('# parser (multi-mode)');
 {
   const r = parseSegments('段一\n---\n段二\n---\n段三', { splitMode: 'paragraph', sep: '---' });
-  check('paragraph 分隔符 3 段', r.segments.length === 3 && r.strategy === 'paragraph' && r.segments[0] === '段一' && r.segments[2] === '段三');
+  check('paragraph 分隔行自适应 3 段', r.segments.length === 3 && r.strategy === 'auto-sepline' && r.segments[0] === '段一' && r.segments[2] === '段三' && r.warnings.some((w) => w.includes('自动切分')));
+}
+{
+  // paragraph：模型没输出符号，直接空行分段 → 按空行自适应
+  const r = parseSegments('甲内容\n\n乙内容', { splitMode: 'paragraph', sep: '---' });
+  check('paragraph 空行自适应', r.segments.length === 2 && r.strategy === 'auto-blank' && r.segments[0] === '甲内容' && r.warnings.some((w) => w.includes('空行')));
+}
+{
+  // paragraph：模型输出标题行 → 按标题自适应（段含标题行）
+  const r = parseSegments('## 卖点\n好东西\n## 场景\n随处用', { splitMode: 'paragraph', sep: '---' });
+  check('paragraph 标题自适应', r.segments.length === 2 && r.strategy === 'auto-heading' && r.segments[0].startsWith('## 卖点') && r.segments[1].includes('随处用'));
 }
 {
   const r = parseSegments('只有一段没有分隔', { splitMode: 'paragraph', sep: '---' });
@@ -125,6 +135,16 @@ console.log('# parser (multi-mode)');
   // 跨模式兜底：选了分段符，模型惯性输出【1】标记 → 按标记切
   const r = parseSegments('【1】甲\n【2】乙', { splitMode: 'paragraph', sep: '---' });
   check('paragraph 模式按标记兜底', r.segments.length === 2 && r.segments[0] === '甲' && r.warnings.some((w) => w.includes('序号标记')));
+}
+{
+  // 小数不误切：3.5万 不是序号标记（dot 变体与自适应探测都需 (?!\d) 保护）
+  const r = parseSegments('3.5万成交\n4.2万成交\n5.8万成交', '【1】');
+  check('小数不误切按单换行自适应', r.segments.length === 3 && r.segments[0] === '3.5万成交' && r.segments[2] === '5.8万成交' && r.strategy === 'auto-line' && r.warnings.some((w) => w.includes('自适应切分')));
+}
+{
+  // marker 模式：模型输出了标题行 → 兜底按标题行自适应切分
+  const r = parseSegments('## 甲\n内容甲\n## 乙\n内容乙', '【1】');
+  check('marker 模式标题兜底', r.segments.length === 2 && r.segments[0].startsWith('## 甲') && r.segments[1].includes('内容乙') && r.strategy === 'auto-heading' && r.warnings.some((w) => w.includes('自适应切分')));
 }
 
 /* ---------- prompt ---------- */

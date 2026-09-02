@@ -63,6 +63,78 @@ function cutSegments(raw, hits, warnings) {
 function stripThink(raw) {
   return raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 }
+export { stripThink };
+
+/* ---------- 自适应分段探测：按文本实际格式判断，不依赖固定符号 ---------- */
+
+/** 行首序号标记形态（按优先级；数字形态用 (?!\d) 排除 3.5万 这类小数误伤） */
+const AUTO_MARKER_PROBES = [
+  { re: /^\s*【\d+】/gm, note: '序号标记' },
+  { re: /^\s*\[\d+\]/gm, note: '序号标记' },
+  { re: /^\s*\d+[.、](?!\d)\s*\S/gm, note: '序号标记' },
+  { re: /^\s*[一二三四五六七八九十]+、/gm, note: '序号标记' },
+];
+
+/**
+ * 探测文本实际的分段结构（优先级从高到低）：
+ * ① 行首序号标记（任一常见形态，≥2 处）→ ② 标题行（≥2 处）→
+ * ③ 空行分段（≥2 段）→ ④ 独立分隔行（兼容模型违规输出，≥2 段）→ ⑤ 单换行（行短且 ≥2 行）。
+ * @returns {{ segments: string[], strategy: string, note: string }} note 为探测依据，供警告文案
+ */
+function autoDetectSegments(raw) {
+  // ① 行首序号标记：取命中 ≥2 的第一个形态
+  for (const p of AUTO_MARKER_PROBES) {
+    const hits = collectHits(p.re, raw);
+    if (hits.length >= 2) {
+      const w = [];
+      return { segments: cutSegments(raw, hits, w), strategy: 'auto-marker', note: p.note };
+    }
+  }
+  // ② 标题行（含标题行切分）
+  const hHits = collectHits(/^\s*#{1,6}\s+\S/gm, raw);
+  if (hHits.length >= 2) {
+    const segments = [];
+    for (let i = 0; i < hHits.length; i++) {
+      const from = hHits[i].start;
+      const to = i + 1 < hHits.length ? hHits[i + 1].start : raw.length;
+      segments.push(raw.slice(from, to).trim());
+    }
+    return { segments, strategy: 'auto-heading', note: '标题行' };
+  }
+  // ③ 空行分段
+  const paras = raw.split(/\n\s*\n+/).map((s) => s.trim()).filter(Boolean);
+  if (paras.length >= 2) {
+    return { segments: paras, strategy: 'auto-blank', note: '空行' };
+  }
+  // ④ 独立分隔行（整行只有符号）：兼容模型违反禁令仍输出 ---/===/*** 的情况
+  const sepline = /^\s*(?:-{2,}|={2,}|\*{2,}|[—─＿_]{2,})\s*$/gm;
+  const bounds = [];
+  let m;
+  while ((m = sepline.exec(raw)) !== null) {
+    bounds.push({ start: m.index, end: m.index + m[0].length });
+    if (m.index === sepline.lastIndex) sepline.lastIndex++;
+  }
+  if (bounds.length) {
+    const segments = [];
+    let cursor = 0;
+    for (const b of bounds) {
+      const seg = raw.slice(cursor, b.start).trim();
+      if (seg) segments.push(seg);
+      cursor = b.end;
+    }
+    const tail = raw.slice(cursor).trim();
+    if (tail) segments.push(tail);
+    if (segments.length >= 2) {
+      return { segments, strategy: 'auto-sepline', note: '分隔行' };
+    }
+  }
+  // ⑤ 单换行：行数 ≥2 且每行都较短
+  const lines = raw.split(/\n+/).map((s) => s.trim()).filter(Boolean);
+  if (lines.length >= 2 && lines.every((l) => l.length <= 120)) {
+    return { segments: lines, strategy: 'auto-line', note: '单换行' };
+  }
+  return { segments: raw ? [raw] : [], strategy: 'single', note: '' };
+}
 
 /**
  * @param {string} text 模型返回全文
@@ -87,13 +159,13 @@ export function parseSegments(text, opts = {}) {
   else if (splitMode === 'paragraph') r = parseByParagraph(raw, sep, warnings);
   else r = parseByMarker(raw, marker, warnings);
 
-  // 跨模式兜底：非 marker 模式只解析出 1 段时，尝试按序号标记切分
-  // （模型见到"输出 N 个分点"时常惯性输出【1】【2】，而忽略所选分隔符）。
-  if (r.strategy === 'single' && splitMode !== 'marker') {
-    const m = parseByMarker(raw, DEFAULT_MARKER, []);
-    if (m.strategy !== 'single' && m.segments.length >= 2) {
-      warnings.push('模型未按所选分列方式输出，已按序号标记（【1】【2】）解析');
-      return { ...m, splitMode, warnings };
+  // 统一自适应兜底：任何模式只解析出 1 段时，按文本实际格式重新探测
+  // （用户要求：不按固定符号切分，根据文本实际格式判断）。
+  if (r.strategy === 'single') {
+    const a = autoDetectSegments(raw);
+    if (a.segments.length >= 2) {
+      warnings.push(`模型未按所选分列方式输出，已按文本实际格式自适应切分（${a.note}）`);
+      return { segments: a.segments, strategy: a.strategy, splitMode, warnings };
     }
   }
 
@@ -110,7 +182,8 @@ function parseByMarker(raw, marker, warnings) {
   // 兜底变体
   const fallbacks = [
     { name: 'bracket', re: /\[(\d+)\]/g },
-    { name: 'dot', re: /(?:^|\n)\s*(\d+)[.、]\s*/g },
+    // (?!\d) 防小数误伤：3.5万 不应被切成 3. / 5万
+    { name: 'dot', re: /(?:^|\n)\s*(\d+)[.、](?!\d)\s*/g },
     { name: 'cnum', re: /[一二三四五六七八九十]+、/g },
   ];
   for (const fb of fallbacks) {
@@ -147,33 +220,21 @@ function parseByBlank(raw, warnings) {
   return { segments: [], strategy: 'empty' };
 }
 
-/** 段落分隔符分列（分隔符单独成段，切断文本） */
+/**
+ * 分段符分列：按文本实际格式自适应判断（用户要求：不再按固定符号 ---/===/*** 作分隔依据，
+ * 因契约已禁止模型输出这些符号；符号分隔行仅在自适应探测中作兼容兜底）。
+ * sep 参数保留形参兼容旧调用，不再参与切分。
+ */
 function parseByParagraph(raw, sep, warnings) {
-  const s = String(sep || '---').trim();
-  if (!s) {
-    warnings.push('段落分隔符为空，已按整段处理');
-    return { segments: [raw], strategy: 'single' };
+  const a = autoDetectSegments(raw);
+  if (a.segments.length >= 2) {
+    // 轻提示：告知实际按哪种文本格式切分（不视为错误），便于用户对照「模型原始输出」排查
+    warnings.push(`已按文本实际格式自动切分（${a.note}）`);
+    return { segments: a.segments, strategy: a.strategy };
   }
-  const re = new RegExp(escapeRegex(s), 'g');
-  const parts = raw.split(re).map((x) => x.trim()).filter(Boolean);
-  if (parts.length >= 2) return { segments: parts, strategy: 'paragraph' };
-  // 宽松变体兜底：模型常输出 --- / === / *** / —— 等"独立成行"分隔线的变体
-  const variants = [
-    { name: '---', re: /\n\s*-{3,}\s*\n/g },
-    { name: '===', re: /\n\s*={3,}\s*\n/g },
-    { name: '***', re: /\n\s*\*{3,}\s*\n/g },
-    { name: '——', re: /\n\s*[—─＿_]{2,}\s*\n/g },
-  ];
-  for (const v of variants) {
-    const vp = raw.split(v.re).map((x) => x.trim()).filter(Boolean);
-    if (vp.length >= 2) {
-      warnings.push(`未按「${s}」分隔，已按 ${v.name} 分隔线解析`);
-      return { segments: vp, strategy: 'paragraph' };
-    }
-  }
-  if (parts.length === 1) {
-    warnings.push(`未按「${s}」分隔，仅解析出 1 段`);
-    return { segments: parts, strategy: 'single' };
+  if (a.segments.length === 1) {
+    warnings.push('分段符模式：仅解析出 1 段，可能未按格式输出');
+    return { segments: a.segments, strategy: 'single' };
   }
   return { segments: [], strategy: 'empty' };
 }
