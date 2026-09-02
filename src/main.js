@@ -15,7 +15,7 @@ import {
 } from './feishu.js';
 import { trialRun, runBatch, retryFailed, batchWriteCells } from './runner.js';
 
-export const APP_VERSION = '20260902f';
+export const APP_VERSION = '20260902g';
 
 const state = {
   cfg: loadCfg(),
@@ -287,21 +287,9 @@ function refreshSplitUI() {
     area.appendChild(el('div', { class: 'form-field full' },
       el('div', { class: 'form-label' }, '分列标记样式（模型依此序号标记分段）'), s));
   } else if (mode === 'paragraph') {
-    const inp = el('input', { type: 'text', value: state.cfg.sep || '---', placeholder: '段落分隔符，如 ---、***、===' });
-    inp.addEventListener('input', () => saveCfg({ sep: inp.value }));
-    const quick = (label, sep, title) => el('button', {
-      class: 'btn', title,
-      onclick: () => { inp.value = sep; saveCfg({ sep }); },
-    }, label);
-    area.appendChild(el('div', { class: 'form-field full' },
-      el('div', { class: 'form-label' }, '段落分隔符（模型输出中用于切分各分点）'),
-      el('div', { class: 'field-row' },
-        inp,
-        quick('三横线', '---', '快捷填入分隔符：三个短横线 ---'),
-        quick('三星号', '***', '快捷填入分隔符：三个星号 ***'),
-        quick('三等号', '===', '快捷填入分隔符：三个等号 ==='),
-      ),
-    ));
+    // 用户要求：类型名只到「分段符」这一层，具体分隔符不展示、不配置（内部用 cfg.sep，默认 ---）
+    area.appendChild(el('div', { class: 'hint', style: 'margin-top:4px' },
+      '分段符：模型在每个分点之间用一个固定的分隔行隔开，插件按分隔行切分，无需额外配置。'));
   } else if (mode === 'heading') {
     const s = el('select', { id: 'headingSel' },
       el('option', { value: '#' }, '一级 #'),
@@ -320,10 +308,10 @@ function refreshSplitUI() {
   const hint = $('splitHint');
   if (hint) {
     const hints = {
-      marker: '模型按【1】【2】…序号标记输出，插件依标记切分为多列。',
-      paragraph: '模型用你设定的分隔符（如 ---）隔开各分点，插件依分隔符切分。',
+      marker: '模型按序号标记逐条输出，插件依标记切分为多列。',
+      paragraph: '模型在每个分点之间用一个固定的分隔行隔开，插件按分隔行切分。',
       blank: '模型用空行分隔分点，插件按空行切分。',
-      heading: '模型用 Markdown 标题（如 ## 卖点）分隔分点，段含标题一并写入。',
+      heading: '模型用标题行分隔分点，段含标题一并写入。',
     };
     hint.textContent = hints[mode] || '';
   }
@@ -390,22 +378,9 @@ function buildSplitCfgEditor(mode) {
       el('div', { class: 'form-label' }, '分列标记样式（模型依此序号标记分段）'), s, customWrap);
   }
   if (mode === 'paragraph') {
-    const inp = el('input', { type: 'text', value: state.cfg.sep || '---', placeholder: '段落分隔符，如 ---、***、===' });
-    inp.addEventListener('input', () => saveCfg({ sep: inp.value }));
-    // 快捷按钮用文字描述而非直接展示符号（用户要求）；实际填入的分隔符见 input
-    const quick = (label, sep, title) => el('button', {
-      class: 'btn', title,
-      onclick: () => { inp.value = sep; saveCfg({ sep }); },
-    }, label);
-    return el('div', { class: 'form-field full' },
-      el('div', { class: 'form-label' }, '段落分隔符（模型输出中用于切分各分点）'),
-      el('div', { class: 'field-row' },
-        inp,
-        quick('三横线', '---', '快捷填入分隔符：三个短横线 ---'),
-        quick('三星号', '***', '快捷填入分隔符：三个星号 ***'),
-        quick('三等号', '===', '快捷填入分隔符：三个等号 ==='),
-      ),
-    );
+    // 用户要求：类型名只到「分段符」这一层，具体分隔符不展示、不配置（内部用 cfg.sep，默认 ---）
+    return el('div', { class: 'hint', style: 'margin-top:4px' },
+      '分段符：模型在每个分点之间用一个固定的分隔行隔开，插件按分隔行切分，无需额外配置。');
   }
   if (mode === 'heading') {
     const s = el('select', {},
