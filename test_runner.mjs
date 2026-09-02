@@ -106,6 +106,26 @@ console.log('# parser (multi-mode)');
   });
   check('heading 单段不判失败（填 1 列）', r.failed.length === 0 && deps._written.length === 1);
 }
+{
+  // 思考模型把 <think>…</think> 混进正文（含假标记）→ 剥离后正常切分
+  const r = parseSegments('<think>让我想想，先列【1】草稿</think>【1】甲\n【2】乙', '【1】');
+  check('think 标签剥离', r.segments.length === 2 && r.segments[0] === '甲' && r.segments[1] === '乙');
+}
+{
+  // paragraph：模型输出了 === 分隔线而非所选 --- → 变体兜底
+  const r = parseSegments('甲内容\n===\n乙内容', { splitMode: 'paragraph', sep: '---' });
+  check('paragraph 变体分隔线兜底', r.segments.length === 2 && r.segments[0] === '甲内容' && r.warnings.length > 0);
+}
+{
+  // blank：模型用单换行代替空行 → 兜底按单换行切
+  const r = parseSegments('甲\n乙\n丙', { splitMode: 'blank' });
+  check('blank 单换行兜底', r.segments.length === 3 && r.segments[2] === '丙' && r.warnings.length > 0);
+}
+{
+  // 跨模式兜底：选了分段符，模型惯性输出【1】标记 → 按标记切
+  const r = parseSegments('【1】甲\n【2】乙', { splitMode: 'paragraph', sep: '---' });
+  check('paragraph 模式按标记兜底', r.segments.length === 2 && r.segments[0] === '甲' && r.warnings.some((w) => w.includes('序号标记')));
+}
 
 /* ---------- prompt ---------- */
 console.log('# prompt');

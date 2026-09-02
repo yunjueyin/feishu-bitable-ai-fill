@@ -22,6 +22,7 @@ export function formatContract(cfg = {}, outputColumns = []) {
   const { splitMode = 'marker', marker = '【1】', sep = '---', headingLevel = '##' } = cfg;
   const head = '输出格式（必须严格遵守）：';
   const tail = [
+    '- 第一行直接输出第一个分点，不要任何开场白、思考过程或说明文字；',
     '- 除分点外，不要输出任何解释、前言、总结或多余文字；',
     '- 不要使用 markdown 代码块包裹。',
   ];

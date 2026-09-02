@@ -59,6 +59,11 @@ function cutSegments(raw, hits, warnings) {
   return segments;
 }
 
+/** 剥离思考模型混进正文的 <think>…</think>（DeepSeek / GLM / 豆包 thinking 常见） */
+function stripThink(raw) {
+  return raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+}
+
 /**
  * @param {string} text 模型返回全文
  * @param {string|object} opts 标记样式字符串 或 { splitMode, marker, sep, headingLevel }
@@ -73,7 +78,7 @@ export function parseSegments(text, opts = {}) {
     headingLevel = '##',
   } = o;
   const warnings = [];
-  const raw = String(text || '').trim();
+  const raw = stripThink(String(text || '').trim());
   if (!raw) return { segments: [], strategy: 'empty', splitMode, warnings: ['模型返回为空'] };
 
   let r;
@@ -81,6 +86,16 @@ export function parseSegments(text, opts = {}) {
   else if (splitMode === 'heading') r = parseByHeading(raw, headingLevel, warnings);
   else if (splitMode === 'paragraph') r = parseByParagraph(raw, sep, warnings);
   else r = parseByMarker(raw, marker, warnings);
+
+  // 跨模式兜底：非 marker 模式只解析出 1 段时，尝试按序号标记切分
+  // （模型见到"输出 N 个分点"时常惯性输出【1】【2】，而忽略所选分隔符）。
+  if (r.strategy === 'single' && splitMode !== 'marker') {
+    const m = parseByMarker(raw, DEFAULT_MARKER, []);
+    if (m.strategy !== 'single' && m.segments.length >= 2) {
+      warnings.push('模型未按所选分列方式输出，已按序号标记（【1】【2】）解析');
+      return { ...m, splitMode, warnings };
+    }
+  }
 
   return { ...r, splitMode, warnings };
 }
@@ -119,6 +134,12 @@ function parseByMarker(raw, marker, warnings) {
 function parseByBlank(raw, warnings) {
   const paras = raw.split(/\n\s*\n+/).map((s) => s.trim()).filter(Boolean);
   if (paras.length >= 2) return { segments: paras, strategy: 'blank' };
+  // 兜底：模型没输出空行、用单换行分隔分点（各段都较短时按单换行切）
+  const lines = raw.split(/\n+/).map((s) => s.trim()).filter(Boolean);
+  if (lines.length >= 2 && lines.every((l) => l.length <= 120)) {
+    warnings.push('未检测到空行分隔，已按单换行切分');
+    return { segments: lines, strategy: 'blank-line' };
+  }
   if (paras.length === 1) {
     warnings.push('空行分列：仅 1 段，可能未按格式输出');
     return { segments: paras, strategy: 'single' };
@@ -136,6 +157,20 @@ function parseByParagraph(raw, sep, warnings) {
   const re = new RegExp(escapeRegex(s), 'g');
   const parts = raw.split(re).map((x) => x.trim()).filter(Boolean);
   if (parts.length >= 2) return { segments: parts, strategy: 'paragraph' };
+  // 宽松变体兜底：模型常输出 --- / === / *** / —— 等"独立成行"分隔线的变体
+  const variants = [
+    { name: '---', re: /\n\s*-{3,}\s*\n/g },
+    { name: '===', re: /\n\s*={3,}\s*\n/g },
+    { name: '***', re: /\n\s*\*{3,}\s*\n/g },
+    { name: '——', re: /\n\s*[—─＿_]{2,}\s*\n/g },
+  ];
+  for (const v of variants) {
+    const vp = raw.split(v.re).map((x) => x.trim()).filter(Boolean);
+    if (vp.length >= 2) {
+      warnings.push(`未按「${s}」分隔，已按 ${v.name} 分隔线解析`);
+      return { segments: vp, strategy: 'paragraph' };
+    }
+  }
   if (parts.length === 1) {
     warnings.push(`未按「${s}」分隔，仅解析出 1 段`);
     return { segments: parts, strategy: 'single' };

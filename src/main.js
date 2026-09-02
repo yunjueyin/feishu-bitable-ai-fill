@@ -15,7 +15,7 @@ import {
 } from './feishu.js';
 import { trialRun, runBatch, retryFailed, batchWriteCells } from './runner.js';
 
-export const APP_VERSION = '20260902b';
+export const APP_VERSION = '20260902c';
 
 const state = {
   cfg: loadCfg(),
