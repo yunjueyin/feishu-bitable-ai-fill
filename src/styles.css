@@ -167,6 +167,13 @@ textarea { resize: vertical; line-height: 1.6; }
 
 .btn-block { width: 100%; margin-top: 11px; padding: 11px 16px; font-size: 14px; }
 
+/* 弱化的次级按钮（重跑失败：常态 disabled 占位，视觉更轻） */
+.btn-sub { color: var(--muted); }
+.btn-group .btn.btn-sub:not(:disabled):hover { color: var(--primary); }
+
+/* 只读展示型输入（固定服务商 Base URL / 限流说明），不再硬编码背景色 */
+.input-readonly { background: #f5f6f8 !important; color: var(--muted) !important; cursor: not-allowed; }
+
 /* 分段按钮组：试跑 / 重跑 / 取消 连成一组，不各占一行 */
 .btn-group {
   display: flex; align-items: stretch;
@@ -204,6 +211,10 @@ textarea { resize: vertical; line-height: 1.6; }
 .progress-meta { display: flex; gap: 16px; margin-top: 8px; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
 .progress-meta b { color: var(--text); font-weight: 600; }
 
+/* 阶段色：建列=灰蓝、写回前生成=蓝（默认）、完成=绿 */
+.progress-bar.phase-build { background: linear-gradient(90deg, #9db4e8, #7d9ede); }
+.progress-bar.phase-done { background: linear-gradient(90deg, #3fc98c, #21a366); }
+
 /* ---------- 日志（可折叠） ---------- */
 .logbox {
   background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
@@ -216,6 +227,9 @@ textarea { resize: vertical; line-height: 1.6; }
 .log-toggle .chev { transition: transform .3s var(--ease); display: inline-flex; }
 .logbox.open .log-toggle .chev { transform: rotate(90deg); }
 .log-toggle .v { margin-left: auto; font-variant-numeric: tabular-nums; color: #c2c7cf; }
+.log-actions { display: flex; gap: 4px; margin-left: 4px; }
+.log-actions .icon-btn { width: 24px; height: 24px; border: none; background: transparent; }
+.log-actions .icon-btn:hover { background: #f0f2f5; transform: none; }
 .log-collapsible { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .32s var(--ease); }
 .logbox.open .log-collapsible { grid-template-rows: 1fr; }
 .log-collapsible > div { overflow: hidden; }
@@ -249,7 +263,18 @@ textarea { resize: vertical; line-height: 1.6; }
 .modal-body { padding: 14px 18px; overflow: auto; }
 .modal-foot { padding: 10px 18px 18px; display: flex; gap: 10px; justify-content: flex-end; }
 
-/* ---------- 设置分组 ---------- */
+/* ---------- 设置分组（tab 化） ---------- */
+.set-tabs {
+  display: flex; gap: 4px; background: #f2f3f5; border-radius: 10px;
+  padding: 4px; margin-bottom: 14px;
+}
+.set-tab {
+  flex: 1; border: none; background: transparent; padding: 7px 0; border-radius: 7px;
+  font-size: 12.5px; color: var(--muted); cursor: pointer; font-weight: 500; font-family: inherit;
+  transition: color .18s var(--ease), background .18s var(--ease), box-shadow .18s var(--ease);
+}
+.set-tab:hover { color: var(--text); }
+.set-tab.active { background: #fff; color: var(--text); font-weight: 600; box-shadow: var(--shadow-sm); }
 .set-group { padding: 4px 0 14px; border-bottom: 1px solid var(--border); margin-bottom: 14px; }
 .set-group:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 4px; }
 .set-group-title {
@@ -277,7 +302,7 @@ textarea { resize: vertical; line-height: 1.6; }
 /* ---------- 输出列模板 ---------- */
 .output-col-grid { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
 .output-col-row {
-  display: grid; grid-template-columns: 20px 1fr 1fr 30px; gap: 8px; align-items: end;
+  display: grid; grid-template-columns: 20px 1fr 1fr 44px 30px; gap: 8px; align-items: end;
   padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: #fcfcfd;
 }
 .output-col-row .form-field { gap: 3px; }
@@ -288,7 +313,27 @@ textarea { resize: vertical; line-height: 1.6; }
   background: var(--primary-weak); color: var(--primary); font-size: 11px; font-weight: 700;
   display: flex; align-items: center; justify-content: center; margin-bottom: 7px;
 }
+.col-ops { display: flex; flex-direction: column; gap: 4px; }
+.col-ops .icon-btn { width: 26px; height: 22px; padding: 0; }
+.col-ops .icon-btn:disabled { opacity: .3; cursor: default; }
 .btn-sm { padding: 5px 8px; font-size: 15px; line-height: 1; }
+
+/* ---------- 总要求字数统计 ---------- */
+.req-count { text-align: right; font-size: 11px; color: #c2c7cf; margin-top: 4px; font-variant-numeric: tabular-nums; }
+
+/* ---------- API Key 显隐 ---------- */
+.key-row { display: flex; gap: 8px; align-items: stretch; }
+.key-row input { flex: 1; }
+.key-eye { width: 36px; flex: none; border-radius: var(--radius-sm); }
+
+/* ---------- 非阻塞 toast ---------- */
+.toast {
+  position: fixed; left: 50%; top: 18px; transform: translateX(-50%); z-index: 300;
+  background: #1f2329; color: #fff; padding: 9px 16px; border-radius: 10px;
+  font-size: 12.5px; box-shadow: var(--shadow-lg); max-width: 86%;
+  animation: toastIn .28s var(--ease) both; pointer-events: none;
+}
+.toast.out { animation: toastOut .3s var(--ease) both; }
 
 /* ---------- 动画 ---------- */
 @keyframes riseIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
@@ -298,8 +343,13 @@ textarea { resize: vertical; line-height: 1.6; }
 @keyframes overlayOut { from { opacity: 1; } to { opacity: 0; } }
 @keyframes popIn { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @keyframes popOut { from { opacity: 1; transform: translateY(0) scale(1); } to { opacity: 0; transform: translateY(6px) scale(.98); } }
+@keyframes toastIn { from { opacity: 0; transform: translate(-50%, -10px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@keyframes toastOut { from { opacity: 1; transform: translate(-50%, 0); } to { opacity: 0; transform: translate(-50%, -8px); } }
 
+/* 窄容器（Widget 侧栏 / 小屏）：列模板行收敛为纵向，弹窗满宽 */
 @media (max-width: 560px) {
   .set-grid { grid-template-columns: 1fr; }
   #app { padding: 16px 12px 36px; }
+  .output-col-row { grid-template-columns: 20px 1fr 44px 30px; }
+  .output-col-row .form-field:last-of-type { grid-column: 1 / -1; }
 }

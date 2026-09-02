@@ -1,7 +1,7 @@
 /**
  * UI 装配与事件编排。SDK 为静态 import（Vite 打包，无外部 CDN 请求）。
  */
-import { el, fillSelect, showModal, fmtEta } from './ui.js';
+import { el, fillSelect, showModal, closeAllModals, showToast, fmtEta } from './ui.js';
 import {
   loadCfg, saveCfg, EXPORT_FORMATS,
   exportRequirement, importRequirementFile, getImportAccept,
@@ -15,7 +15,7 @@ import {
 } from './feishu.js';
 import { trialRun, runBatch, retryFailed, batchWriteCells } from './runner.js';
 
-export const APP_VERSION = '20260902c';
+export const APP_VERSION = '20260902d';
 
 const state = {
   cfg: loadCfg(),
@@ -47,6 +47,12 @@ const ICONS = {
   stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
   chevron: '<path d="M9 18l6-6-6-6"/>',
   check: '<path d="M20 6L9 17l-5-5"/>',
+  eye: '<path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/>',
+  eyeOff: '<path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>',
+  up: '<path d="M12 19V5M5 12l7-7 7 7"/>',
+  down: '<path d="M12 5v14M19 12l-7 7-7-7"/>',
+  copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>',
+  x: '<path d="M18 6L6 18M6 6l12 12"/>',
 };
 function iconSvg(name, size = 16) {
   const span = el('span', { class: 'ic' });
@@ -104,6 +110,7 @@ function render() {
       ),
     ),
     el('textarea', { id: 'requirement', class: 'textarea-req', placeholder: '粘贴总要求文档（给 AI 的输出约束）。例如：基于素材写产品文案，口语化、每条不超过 30 字、不出现"首先"等套话；输出 5 个分点，覆盖卖点、场景、人群、对比、行动号召。' }),
+    el('div', { class: 'req-count', id: 'reqCount' }, ''),
   ));
 
   // ③ 执行
@@ -114,10 +121,10 @@ function render() {
     ),
     el('div', { class: 'btn-group' },
       el('button', { class: 'btn', id: 'btnTrial', onclick: onTrial }, '试跑预览'),
-      el('button', { class: 'btn', id: 'btnRetry', onclick: onRetryFailed, disabled: true }, '重跑失败'),
+      el('button', { class: 'btn btn-sub', id: 'btnRetry', onclick: onRetryFailed, disabled: true, title: '上一轮批量中失败的行，重新生成' }, '重跑失败'),
       el('button', { class: 'btn btn-danger', id: 'btnCancel', onclick: onCancelClick, disabled: true }, '取消'),
     ),
-    el('button', { class: 'btn btn-primary btn-block', id: 'btnRun', onclick: () => onRun(), disabled: true }, '开始批量生成'),
+    el('button', { class: 'btn btn-primary btn-block', id: 'btnRun', onclick: () => onRun(), title: '先填好源字段与模型配置（右上角设置）' }, '开始批量生成'),
     el('div', { class: 'progress-wrap', id: 'progressBox' },
       el('div', { class: 'progress-track' }, el('div', { class: 'progress-bar', id: 'progressBar' })),
       el('div', { class: 'progress-meta' },
@@ -135,6 +142,10 @@ function render() {
       el('span', { class: 'chev' }, iconSvg('chevron', 14)),
       el('span', {}, '运行日志'),
       el('span', { class: 'v' }, 'v' + APP_VERSION),
+      el('div', { class: 'log-actions' },
+        el('button', { class: 'icon-btn', title: '复制日志', onclick: (e) => { e.stopPropagation(); copyLog(); } }, iconSvg('copy', 14)),
+        el('button', { class: 'icon-btn', title: '清空日志', onclick: (e) => { e.stopPropagation(); clearLog(); } }, iconSvg('x', 14)),
+      ),
     ),
     el('div', { class: 'log-collapsible' },
       el('div', {}, el('div', { id: 'log' })),
@@ -153,6 +164,43 @@ export function log(msg, cls = '') {
   if (lb && !lb.classList.contains('open')) lb.classList.add('open');
 }
 
+/** 往日志区追加任意 DOM 节点（如「导出失败清单」按钮），保持与 log() 相同的滚动/展开行为 */
+function logNode(node) {
+  const box = $('log');
+  if (!box) return;
+  const d = el('div', { class: 'row' }, node);
+  box.appendChild(d);
+  box.scrollTop = box.scrollHeight;
+  const lb = $('logbox');
+  if (lb && !lb.classList.contains('open')) lb.classList.add('open');
+}
+
+function clearLog() {
+  const box = $('log');
+  if (box) box.innerHTML = '';
+}
+
+function copyLog() {
+  const box = $('log');
+  const text = box ? box.innerText : '';
+  if (!text.trim()) return showToast('日志为空，无需复制');
+  const done = () => showToast('日志已复制到剪贴板');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+  } else {
+    fallbackCopy(text, done);
+  }
+}
+
+function fallbackCopy(text, done) {
+  const ta = el('textarea', { style: 'position:fixed;opacity:0' });
+  ta.value = text;
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); done(); } catch (e) { showToast('复制失败，请手动选择日志文本'); }
+  ta.remove();
+}
+
 function toggleLog() {
   const lb = $('logbox');
   if (lb) lb.classList.toggle('open');
@@ -165,27 +213,41 @@ function collectCfg() {
 
 function setProgress(done, total, phase) {
   const pct = total ? Math.round((done / total) * 100) : 0;
-  $('progressBar').style.width = pct + '%';
+  const bar = $('progressBar');
+  bar.style.width = pct + '%';
+  // 阶段色：生成=蓝（默认）、建列=灰蓝、写回=绿、完成=绿
+  bar.classList.toggle('phase-build', phase === 'build_columns');
+  bar.classList.toggle('phase-done', phase === 'done');
   $('progressPct').textContent = pct + '%';
   const stageMap = {
     init: '准备中', trial: '试跑中', build_columns: '建列中', generate: '生成中', write: '写回中', done: '已完成',
   };
-  $('progressStage').textContent = stageMap[phase] || (phase === 'write' ? '写回中' : '生成中');
+  $('progressStage').textContent = stageMap[phase] || '生成中';
   $('progressCount').textContent = `${done}/${total}`;
-  const elapsed = (Date.now() - state.t0) / 1000;
-  const eta = done > 0 ? (elapsed / done) * (total - done) : NaN;
+  // ETA：滑动平均平滑估算（单次采样波动大，直接用均值会在长任务后段严重偏差）
+  const now = Date.now();
+  const pr = state._prog;
+  if (!pr || pr.phase !== phase || done < pr.done) {
+    state._prog = { phase, done, t: now, avg: null };
+  } else if (done > pr.done) {
+    const sample = (now - pr.t) / (done - pr.done);
+    pr.avg = pr.avg == null ? sample : pr.avg * 0.7 + sample * 0.3;
+    pr.done = done;
+    pr.t = now;
+  }
+  const eta = (pr && pr.avg != null) ? (pr.avg * (total - done)) / 1000 : NaN;
   $('progressEta').textContent = fmtEta(eta);
 }
 
-function showCancelOverlay() {
-  return showModal('已请求取消', el('div', { class: 'hint' }, '正在等待在途请求结束，已完成的单元格会保留。'), [
-    { label: '知道了', primary: true },
-  ]);
+/** 非阻塞取消提示（替代原阻塞式弹窗，不打断看进度） */
+function showCancelToast() {
+  showToast('已请求取消，等待在途请求结束，已完成内容会保留', 3200);
 }
 
-/** 严重错误：弹窗提示，避免只在日志/底部提示用户看不到 */
-function showError(title, message) {
+/** 严重错误：弹窗提示，避免只在日志/底部提示用户看不到。extraButtons 可附加动作按钮 */
+function showError(title, message, extraButtons = []) {
   return showModal(title || '出错了', el('div', { class: 'err-text', style: 'font-size:13px;line-height:1.6;white-space:pre-wrap' }, message), [
+    ...extraButtons,
     { label: '知道了', primary: true },
   ]);
 }
@@ -284,6 +346,16 @@ function removeOutputColumn(index) {
   renderOutputColumns();
 }
 
+/** 上移/下移输出列（dir: -1 上移，1 下移） */
+function moveOutputColumn(index, dir) {
+  const cols = getOutputColumns();
+  const target = index + dir;
+  if (index < 0 || index >= cols.length || target < 0 || target >= cols.length) return;
+  [cols[index], cols[target]] = [cols[target], cols[index]];
+  state.cfg = saveCfg({ outputColumns: cols });
+  renderOutputColumns();
+}
+
 function updateOutputColumn(index, key, value) {
   const cols = getOutputColumns();
   if (index >= 0 && index < cols.length) {
@@ -320,44 +392,91 @@ function renderOutputColumns() {
       el('span', { class: 'output-col-index' }, `${i + 1}`),
       el('div', { class: 'form-field' }, el('div', { class: 'form-label' }, '列名'), nameInp),
       el('div', { class: 'form-field' }, el('div', { class: 'form-label' }, '参考案例（可选）'), exInp),
+      el('div', { class: 'col-ops' },
+        el('button', { class: 'icon-btn', title: '上移', onclick: () => moveOutputColumn(i, -1), disabled: i === 0 }, iconSvg('up', 13)),
+        el('button', { class: 'icon-btn', title: '下移', onclick: () => moveOutputColumn(i, 1), disabled: i === cols.length - 1 }, iconSvg('down', 13)),
+      ),
       el('button', { class: 'btn btn-danger btn-sm', onclick: () => removeOutputColumn(i), title: '删除列' }, iconSvg('trash', 14)),
     ));
   });
   list.appendChild(grid);
 }
 
-/* ---------- 设置弹窗（收纳次要配置） ---------- */
+/* ---------- 设置弹窗（分组 tab 收纳） ---------- */
 function openSettings() {
+  closeAllModals(); // 显式替换：清掉旧弹窗（堆叠式弹窗的「替换」语义入口）
   const cfg = loadCfg();
   const content = el('div', {});
 
-  // 分组：模型配置（服务商 → 模型 → API Key）
+  // tab 栏 + 内容区（四组不再一屏长滚动）
+  const tabBar = el('div', { class: 'set-tabs' });
+  const body = el('div', {});
+  const TABS = [
+    { id: 'model', label: '模型', build: buildModelGroup },
+    { id: 'split', label: '分列', build: buildSplitGroup },
+    { id: 'cols', label: '列模板', build: buildOutputGroup },
+    { id: 'tpl', label: '模板', build: buildTplGroup },
+  ];
+  let activeTab = 'model';
+  function renderTab() {
+    tabBar.querySelectorAll('.set-tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === activeTab));
+    body.innerHTML = '';
+    body.appendChild(TABS.find((t) => t.id === activeTab).build());
+    if (activeTab === 'split') refreshSplitUI();
+    if (activeTab === 'cols') renderOutputColumns();
+  }
+  TABS.forEach((t) => {
+    tabBar.appendChild(el('button', { class: 'set-tab', 'data-tab': t.id, onclick: () => { activeTab = t.id; renderTab(); } }, t.label));
+  });
+  content.append(tabBar, body);
+  renderTab();
+
+  showModal('设置', content, [{ label: '完成', primary: true, onClick: onSettingsDone }]);
+}
+
+/** 分组①：模型配置（服务商切换时只重建本组，不再整弹窗重渲染导致焦点/滚动丢失） */
+function buildModelGroup() {
+  const cfg = loadCfg();
   const p = getProvider(cfg.provider);
-  const gModel = el('div', { class: 'set-group' },
+  const defaultLabel = (p.models || []).length
+    ? ((p.models.find((m) => m.value === p.defaultModel) || p.models[0]).label)
+    : null;
+
+  const providerSel = el('select', { id: 'setProvider' },
+    ...PROVIDERS.map((pr) => el('option', { value: pr.id }, pr.name)));
+  providerSel.value = p.id;
+  providerSel.addEventListener('change', () => {
+    const np = getProvider(providerSel.value);
+    const patch = { provider: np.id };
+    if (np.fixedBaseUrl) { patch.baseUrl = np.baseUrl; patch.model = np.defaultModel; }
+    saveCfg(patch);
+    // 局部重渲染：仅重建模型配置分组，滚动位置与其它 tab 不受影响
+    group.replaceWith(buildModelGroup());
+  });
+
+  // API Key：密码框 + 显隐切换（眼睛图标）
+  const keyInput = el('input', { type: 'password', id: 'setApiKey', value: cfg.apiKey || '', placeholder: 'sk-…' });
+  bindLive(keyInput, 'apiKey');
+  const eyeBtn = el('button', { class: 'icon-btn key-eye', title: '显示 / 隐藏 API Key', type: 'button' }, iconSvg('eye', 15));
+  eyeBtn.addEventListener('click', () => {
+    const show = keyInput.type === 'password';
+    keyInput.type = show ? 'text' : 'password';
+    eyeBtn.innerHTML = '';
+    eyeBtn.appendChild(iconSvg(show ? 'eyeOff' : 'eye', 15));
+  });
+
+  const group = el('div', { class: 'set-group' },
     el('div', { class: 'set-group-title' }, iconSvg('gear', 15), '模型配置'),
     el('div', { class: 'set-grid' },
-      // 服务商
-      (() => {
-        const s = el('select', { id: 'setProvider' },
-          ...PROVIDERS.map((pr) => el('option', { value: pr.id }, pr.name)));
-        s.value = p.id;
-        s.addEventListener('change', () => {
-          const np = getProvider(s.value);
-          const patch = { provider: np.id };
-          if (np.fixedBaseUrl) { patch.baseUrl = np.baseUrl; patch.model = np.defaultModel; }
-          saveCfg(patch);
-          openSettings(); // 服务商切换后重渲染，刷新模型下拉与 Base URL 显示
-        });
-        return el('div', { class: 'form-field full' },
-          el('div', { class: 'form-label' }, '服务商'), s);
-      })(),
+      el('div', { class: 'form-field full' },
+        el('div', { class: 'form-label' }, '服务商'), providerSel),
       // Base URL：固定服务商只读显示，自定义才允许填写
       p.fixedBaseUrl
         ? el('div', { class: 'form-field full' },
             el('div', { class: 'form-label' }, 'Base URL（由服务商固定）'),
-            el('input', { type: 'text', id: 'setBaseUrl', value: p.baseUrl, disabled: true, style: 'background:#f5f6f8;color:var(--muted)' }))
+            el('input', { type: 'text', id: 'setBaseUrl', value: p.baseUrl, disabled: true, class: 'input-readonly' }))
         : liveField({ label: 'Base URL', value: cfg.baseUrl, placeholder: 'https://api.deepseek.com', key: 'baseUrl', full: true, id: 'setBaseUrl' }),
-      // 模型：预设服务商用下拉，自定义自由输入
+      // 模型：预设服务商用下拉（标签动态跟随当前服务商），自定义自由输入
       (p.models && p.models.length)
         ? (() => {
             const cur = cfg.model && p.models.some((m) => m.value === cfg.model) ? cfg.model : p.models[0].value;
@@ -365,11 +484,13 @@ function openSettings() {
             s.value = cur;
             bindLive(s, 'model');
             return el('div', { class: 'form-field full' },
-              el('div', { class: 'form-label' }, '模型（默认 2.5 Flash）'), s);
+              el('div', { class: 'form-label' }, defaultLabel ? `模型（默认 ${defaultLabel}）` : '模型'), s);
           })()
         : liveField({ label: '模型名', value: cfg.model, placeholder: 'deepseek-chat', key: 'model', full: true, id: 'setModel' }),
-      // API Key
-      liveField({ label: 'API Key', type: 'password', value: cfg.apiKey, placeholder: 'sk-…', key: 'apiKey', full: true, id: 'setApiKey' }),
+      // API Key（带显隐切换）
+      el('div', { class: 'form-field full' },
+        el('div', { class: 'form-label' }, 'API Key'),
+        el('div', { class: 'key-row' }, keyInput, eyeBtn)),
       // 并发：Agnes 等带 rateLimit 的服务商固定为保守值，不让用户手动设置
       p.rateLimit
         ? el('div', { class: 'form-field full' },
@@ -377,7 +498,7 @@ function openSettings() {
             el('input', {
               type: 'text', disabled: true,
               value: `并发 ${p.rateLimit.maxConc}，请求间隔 ≥ ${p.rateLimit.minIntervalMs}ms（避免触发限流）`,
-              style: 'background:#f5f6f8;color:var(--muted)',
+              class: 'input-readonly',
             }))
         : liveField({ label: '并发数（1–8）', value: cfg.llmConc || 3, key: 'llmConc', isNum: true, id: 'setConc' }),
     ),
@@ -387,9 +508,12 @@ function openSettings() {
     el('div', { class: 'set-tip' },
       p.tip || (p.fixedBaseUrl ? `已选「${p.name}」：填好 API Key 即可使用。` : '填好服务商信息即可，Key 仅存本浏览器、不会上传。')),
   );
+  return group;
+}
 
-  // 分组：分列设置（迁入设置，主界面只留摘要标签）
-  const gSplit = el('div', { class: 'set-group' },
+/** 分组②：分列设置 */
+function buildSplitGroup() {
+  return el('div', { class: 'set-group' },
     el('div', { class: 'set-group-title' }, iconSvg('sparkle', 15), '分列设置'),
     el('div', { class: 'form-field full' },
       el('div', { class: 'form-label' }, '分列方式'),
@@ -416,9 +540,11 @@ function openSettings() {
     ),
     el('div', { class: 'set-tip', id: 'splitHint' }, ''),
   );
+}
 
-  // 分组：输出列模板（迁入设置）
-  const gOutput = el('div', { class: 'set-group' },
+/** 分组③：输出列模板 */
+function buildOutputGroup() {
+  return el('div', { class: 'set-group' },
     el('div', { class: 'set-group-title' }, iconSvg('plus', 15), '输出列模板'),
     el('div', { id: 'outputColList' }),
     el('div', { class: 'field-row', style: 'margin-top:8px' },
@@ -427,9 +553,11 @@ function openSettings() {
     ),
     el('div', { class: 'set-tip' }, '定义列名与参考案例，AI 按此生成；留空则按试跑结果自动建列。'),
   );
+}
 
-  // 分组：总要求模板（仅存/删；导入导出在主界面总要求面板）
-  const gTpl = el('div', { class: 'set-group' },
+/** 分组④：总要求模板（仅存/删；导入导出在主界面总要求面板） */
+function buildTplGroup() {
+  return el('div', { class: 'set-group' },
     el('div', { class: 'set-group-title' }, '总要求模板'),
     el('div', { class: 'field-row' },
       el('button', { class: 'btn', onclick: onSaveTemplate }, '存为模板'),
@@ -437,12 +565,6 @@ function openSettings() {
     ),
     el('div', { class: 'set-tip' }, '模板用于快速切换不同总要求；导入 / 导出在「总要求」面板。'),
   );
-
-  content.append(gModel, gSplit, gOutput, gTpl);
-  refreshSplitUI();
-  renderOutputColumns();
-
-  showModal('设置', content, [{ label: '完成', primary: true, onClick: onSettingsDone }]);
 }
 
 /** 把输入实时写入 state.cfg（避免弹窗关闭后 DOM 移除导致配置丢失） */
@@ -507,9 +629,14 @@ async function verifyCurrentModel() {
 
 async function onVerifyClick() {
   const res = await verifyCurrentModel();
+  // 模型 ID 不存在时的针对性提示（404 / model 类错误高发于手抄模型名）
+  let msg = res.message;
+  if (!res.ok && /model|模型|404|not.?found/i.test(msg)) {
+    msg += '\n\n提示：请到服务商官方文档核对模型 ID 拼写（部分服务商模型会版本迭代下线）。';
+  }
   showModal(
-    res.ok ? '✅ 模型配置有效' : '⚠ 模型配置有问题',
-    el('div', { class: res.ok ? '' : 'err-text', style: 'font-size:13px;line-height:1.6' }, res.message),
+    res.ok ? '模型配置有效' : '模型配置有问题',
+    el('div', { class: res.ok ? '' : 'err-text', style: 'font-size:13px;line-height:1.6;white-space:pre-wrap' }, msg),
     [{ label: '知道了', primary: true }],
   );
 }
@@ -517,14 +644,39 @@ async function onVerifyClick() {
 async function onSettingsDone() {
   const res = await verifyCurrentModel();
   if (res.ok) {
-    log('模型配置校验通过 ✅', 'ok');
+    log('模型配置校验通过', 'ok');
     return true;
   }
-  showError('⚠ 模型配置有问题', res.message);
+  showError('模型配置有问题', res.message);
   return false; // 留在设置弹窗让用户修改
 }
 
 /* ---------- 模板管理 ---------- */
+/** 弹窗式文本输入（替代原生 prompt：Widget iframe 环境下原生 prompt 可能被宿主拦截返回 null） */
+function inputModal(title, placeholder = '', defVal = '') {
+  return new Promise((resolve) => {
+    const inp = el('input', { type: 'text', value: defVal, placeholder });
+    const wrap = el('div', {}, inp);
+    const done = (v) => resolve(v);
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') done(inp.value.trim()); });
+    showModal(title, wrap, [
+      { label: '取消', onClick: () => done(null) },
+      { label: '确定', primary: true, onClick: () => done(inp.value.trim()) },
+    ]);
+    setTimeout(() => inp.focus(), 60);
+  });
+}
+
+/** 弹窗式确认 */
+function confirmModal(title, message, okLabel = '确定') {
+  return new Promise((resolve) => {
+    showModal(title, el('div', { class: 'hint', style: 'font-size:13px;line-height:1.6' }, message), [
+      { label: '取消', onClick: () => resolve(false) },
+      { label: okLabel, primary: true, onClick: () => resolve(true) },
+    ]);
+  });
+}
+
 function refreshTemplates() {
   const sel = $('tplSel');
   sel.innerHTML = '';
@@ -535,22 +687,31 @@ function refreshTemplates() {
   if (state.cfg.activeTemplate) sel.value = state.cfg.activeTemplate;
 }
 
-function onSaveTemplate() {
+async function onSaveTemplate() {
   const text = $('requirement').value.trim();
   if (!text) return log('要求内容为空，无法保存模板', 'warn');
-  const name = prompt('模板名称：', '模板' + ((state.cfg.templates?.length || 0) + 1));
+  const name = await inputModal('存为模板：输入模板名称', '如：产品文案 / 小红书笔记',
+    '模板' + ((state.cfg.templates?.length || 0) + 1));
   if (!name) return;
+  // 重名不再静默覆盖，先确认
+  const existed = (state.cfg.templates || []).some((t) => t.name === name);
+  if (existed) {
+    const ok = await confirmModal('模板已存在', `模板「${name}」已存在，覆盖其内容？`, '覆盖');
+    if (!ok) return;
+  }
   const templates = (state.cfg.templates || []).filter((t) => t.name !== name);
   templates.push({ name, text });
   saveCfg({ templates, activeTemplate: name });
   state.cfg = loadCfg();
   refreshTemplates();
-  log(`模板「${name}」已保存`, 'ok');
+  log(`模板「${name}」已保存${existed ? '（覆盖原模板）' : ''}`, 'ok');
 }
 
-function onDeleteTemplate() {
+async function onDeleteTemplate() {
   const name = $('tplSel').value;
   if (!name) return log('未选择模板', 'warn');
+  const ok = await confirmModal('删除模板', `确定删除模板「${name}」？删除后不可恢复。`, '删除');
+  if (!ok) return;
   const templates = (state.cfg.templates || []).filter((t) => t.name !== name);
   saveCfg({ templates, activeTemplate: '' });
   state.cfg = loadCfg();
@@ -568,6 +729,15 @@ function downloadBlob(blob, filename) {
   const a = el('a', { href: URL.createObjectURL(blob), download: filename });
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+}
+
+/** 失败清单导出 CSV（recordId + 错误信息；BOM 头保证 Excel 打开中文不乱码） */
+function exportFailedCsv(failed) {
+  const esc = (s) => '"' + String(s || '').replace(/"/g, '""') + '"';
+  const lines = ['记录ID,失败原因', ...failed.map((f) => esc(f.recordId) + ',' + esc(f.error))];
+  const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  downloadBlob(blob, `失败清单_${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.csv`);
+  log(`已导出失败清单 ${failed.length} 条`, 'ok');
 }
 
 async function onExportClick() {
@@ -604,6 +774,7 @@ async function handleImportFile(file) {
       $('requirement').value = state.cfg.requirement;
       refreshTemplates();
       refreshSplitUI();
+      renderOutputColumns(); // 设置弹窗若开着（列模板 tab），同步刷新
       log(`已导入配置（含 ${(j.templates || []).length} 套模板）`, 'ok');
     } else {
       $('requirement').value = res.text || '';
@@ -646,7 +817,16 @@ export async function reloadTable() {
 
 /* ---------- 读取行数据 ---------- */
 async function loadRows(columnNames = []) {
-  const records = await readRecords(state.table, state.viewId);
+  // 大表读取进度：每 1000 行落一条日志，避免长时间无反馈
+  let logged = 0;
+  const records = await readRecords(state.table, state.viewId, {
+    onRead: (loaded) => {
+      if (loaded >= logged + 1000) {
+        logged = Math.floor(loaded / 1000) * 1000;
+        log(`已读取 ${loaded} 行…`);
+      }
+    },
+  });
   if (!Array.isArray(records)) throw new Error(`读取记录返回非数组：${typeof records}`);
   if (!Array.isArray(state.fields)) throw new Error('字段列表异常，请重新点击「刷新表/字段」');
   // 兜底防御：columnNames 非数组时降级为空数组并 log warn，
@@ -734,10 +914,19 @@ function confirmColumnsBeforeRun(result, firstRow, columns) {
         el('pre', {}, result.segments[i] || '（空）'),
       ));
     });
+    const brief = firstRow.text.length > 100 ? firstRow.text.slice(0, 100) + '…' : firstRow.text;
     wrap.appendChild(el('div', { class: 'hint', style: 'margin-top:10px' },
-      `素材预览：${firstRow.text.slice(0, 100)}…（列数或内容不对？点「取消」去调整总要求/分列方式，或改用「输出列模板」固定列。）`));
+      `素材预览：${brief}（列数或内容不对？点「取消」去调整总要求/分列方式，或改用「输出列模板」固定列。）`));
     showModal('确认输出列（试跑首行结果）', wrap, [
       { label: '取消，我去调整', onClick: () => resolve(false) },
+      { label: '存为列模板并批量', onClick: () => {
+        // 一键把本次确认的列名固化为输出列模板（含 example 保留原结构），后续可复用/微调
+        saveCfg({ outputColumns: columns.map((name) => ({ name, example: '' })) });
+        state.cfg = loadCfg();
+        renderOutputColumns();
+        log(`已将 [${columns.join(', ')}] 存为输出列模板`, 'ok');
+        resolve(true);
+      } },
       { label: `确认 ${columns.length} 列，开始批量`, primary: true, onClick: () => resolve(true) },
     ]);
   });
@@ -768,8 +957,20 @@ function showPreview(result, firstRow) {  const explicitCols = Array.isArray(sta
       el('pre', {}, result.segments[i] || '（空）'),
     ));
   }
+  // 模型原始输出折叠展示：分列不符预期时可展开核对（分列问题排查入口）
+  const rawPre = el('pre', { style: 'display:none;white-space:pre-wrap;font-size:12px;max-height:200px;overflow:auto;background:#fafbfc;padding:8px;border-radius:6px' }, result.raw || '（空）');
+  wrap.appendChild(el('button', {
+    class: 'btn btn-sm', style: 'margin-top:2px',
+    onclick: (e) => {
+      const show = rawPre.style.display === 'none';
+      rawPre.style.display = show ? 'block' : 'none';
+      e.target.textContent = show ? '收起原始输出' : '查看模型原始输出';
+    },
+  }, '查看模型原始输出'));
+  wrap.appendChild(rawPre);
+  const brief = firstRow.text.length > 100 ? firstRow.text.slice(0, 100) + '…' : firstRow.text;
   wrap.appendChild(el('div', { class: 'hint', style: 'margin-top:10px' },
-    `素材预览：${firstRow.text.slice(0, 100)}…（本窗口仅预览，关闭后请点击主界面「开始批量生成」）`));
+    `素材预览：${brief}（本窗口仅预览，关闭后请点击主界面「开始批量生成」）`));
   showModal('首行预览（不写回）', wrap, [{ label: '关闭', primary: true }]);
 }
 
@@ -898,14 +1099,23 @@ async function onRun(presetColumns = null) {
     } else {
       log(`完成：写回 ${result.written} 格，跳过 ${result.skipped} 行，失败 ${result.failed.length} 项，分点超列截断 ${result.truncated} 行，不足留空 ${result.lessFilled} 行`, result.skipped && !result.written ? 'warn' : 'ok');
     }
-    // 全部行被「跳过已有内容」跳过：醒目弹窗说明原因与解决方法（而非静默"完成"让用户困惑）
+    // 全部行被「跳过已有内容」跳过：醒目弹窗说明原因，并提供一键「改为覆盖全部并重跑」
     if (!result.aborted && !result.fatal && result.skipped > 0 && result.skipped === rows.length) {
-      showError('所有行都被跳过了', `共 ${rows.length} 行全部因「跳过已填满的行」被跳过——这些行的所有输出列都已有内容（通常是之前生成过的残留）。\n\n如需重新生成，二选一：\n① 在「分列设置 → 运行范围」改为「覆盖全部行」；\n② 或先清空这些行的输出列内容再跑（只清空部分列的话，会只补空列）。`);
+      showError('所有行都被跳过了', `共 ${rows.length} 行全部因「跳过已填满的行」被跳过——这些行的所有输出列都已有内容（通常是之前生成过的残留）。\n\n如需重新生成：点下方按钮改为「覆盖全部行」并立即重跑；或先清空这些行的输出列内容再跑（只清空部分列的话，会只补空列）。`, [
+        { label: '改为覆盖全部并重跑', onClick: () => {
+          saveCfg({ skipFilled: false });
+          state.cfg = loadCfg();
+          log('已切换为「覆盖全部行」，自动重跑…');
+          onRun();
+        } },
+      ]);
     }
     if (result.fatal) showError('建列失败', result.fatal);
     if (result.failed.length) {
       $('btnRetry').disabled = false;
       log('失败明细（前 20 条）：\n' + result.failed.slice(0, 20).map((f) => `  行 ${f.recordId}: ${f.error}`).join('\n'), 'err');
+      // 失败清单一键导出 CSV（全量，不受前 20 条限制）
+      logNode(el('button', { class: 'btn btn-sm', style: 'margin:2px 0', onclick: () => exportFailedCsv(result.failed) }, `导出失败清单（${result.failed.length} 条 CSV）`));
     }
   } catch (e) {
     showError('批量执行失败', describeErr(e));
@@ -919,6 +1129,10 @@ async function onRetryFailed() {
     showError('没有可重跑的失败项', '当前没有失败的行，无需重跑。');
     return;
   }
+  if (!Array.isArray(state.lastColumns) || !state.lastColumns.length) {
+    showError('无法重跑', '输出列信息缺失，请重新执行一次批量生成。');
+    return;
+  }
   const cfg = ensureModelConfig();
   if (!cfg) return;
   const failedIds = new Set(state.lastResult.failed.map((f) => f.recordId));
@@ -926,7 +1140,15 @@ async function onRetryFailed() {
   state.aborted = false;
   state.t0 = Date.now();
   try {
-    const rows = (state.lastRows || []).filter((r) => failedIds.has(r.recordId));
+    // 重新读取当前表数据（此前用旧快照：期间用户改表/删列会写错位或覆盖手工修改）
+    log('重新读取失败行的最新数据…');
+    const allRows = await loadRows(state.lastColumns);
+    const rows = allRows.filter((r) => failedIds.has(r.recordId));
+    if (!rows.length) {
+      log('失败行已不存在（可能被删除），无需重跑', 'warn');
+      setRunning(false);
+      return;
+    }
     log(`重跑 ${rows.length} 个失败行…`);
     const deps = makeDeps(cfg);
     const result = await runBatch(deps, {
@@ -947,7 +1169,7 @@ async function onRetryFailed() {
 function onCancelClick() {
   if (!state.running) return;
   state.aborted = true;
-  showCancelOverlay();
+  showCancelToast();
   log('已请求取消，等待在途请求结束…', 'warn');
 }
 
@@ -956,7 +1178,6 @@ function setRunning(running, mode) {
   $('btnTrial').disabled = running;
   $('btnRun').disabled = running || mode === 'trial';
   $('btnCancel').disabled = !running;
-  if (!running) $('progressStage').textContent = $('progressStage').textContent;
 }
 
 /* ---------- 启动 ---------- */
@@ -1026,8 +1247,17 @@ function htmlToMarkdown(html) {
 
 function bindCfgInputs() {
   const req = $('requirement');
+  const reqCount = $('reqCount');
+  const syncCount = () => {
+    if (reqCount) {
+      const n = req.value.length;
+      reqCount.textContent = n ? `${n} 字` : '';
+    }
+  };
   req.value = state.cfg.requirement || '';
+  syncCount();
   req.addEventListener('change', () => saveCfg({ requirement: req.value }));
+  req.addEventListener('input', syncCount);
   // 粘贴时保留标题等级/背景色（转换为 Markdown + inline HTML）
   req.addEventListener('paste', (e) => {
     const html = e.clipboardData && e.clipboardData.getData('text/html');
@@ -1040,6 +1270,7 @@ function bindCfgInputs() {
     const after = req.value.slice(end);
     req.value = before + md + after;
     saveCfg({ requirement: req.value });
+    syncCount();
   });
   const imp = $('importFile');
   imp.addEventListener('change', () => { handleImportFile(imp.files[0]); imp.value = ''; });
@@ -1057,6 +1288,8 @@ async function init() {
       $('requirement').value = t.text;
       saveCfg({ requirement: t.text, activeTemplate: t.name });
       state.cfg = loadCfg();
+      $('requirement').dispatchEvent(new Event('input')); // 同步字数统计
+      $('requirement').focus();
     }
   };
   log(`插件已加载 v${APP_VERSION}`);

@@ -126,9 +126,11 @@ export function describeErr(e) {
  * （与此前 iframe/自动化插件"必须带 viewId 保序"不同——Widget 运行时视图排序不可用。）
  * @param {ITable} table
  * @param {string} [viewId] 仅保留形参以兼容调用方，本函数内部忽略（Widget 运行时传了会报错）。
+ * @param {object} [opts]
+ * @param {(loaded:number, page:number)=>void} [opts.onRead] 分页读取进度回调（大表读取时给用户反馈）。
  * @returns {Promise<Array<{recordId:string, fields:Object}>>}
  */
-export async function readRecords(table, viewId, { pageSize = 200, maxPages = 2000 } = {}) {
+export async function readRecords(table, viewId, { pageSize = 200, maxPages = 2000, onRead } = {}) {
   if (!table) throw new Error('数据表未加载，请先在「数据源」面板点击「刷新表/字段」');
   const all = [];
   let pageToken;
@@ -143,6 +145,7 @@ export async function readRecords(table, viewId, { pageSize = 200, maxPages = 20
     hasMore = resp.hasMore;
     pageToken = resp.pageToken;
     page++;
+    if (onRead) { try { onRead(all.length, page); } catch (e) { /* 进度回调不影响读取 */ } }
     if (page > maxPages) break; // 安全熔断
   } while (hasMore && pageToken);
   return all;
@@ -150,6 +153,7 @@ export async function readRecords(table, viewId, { pageSize = 200, maxPages = 20
 
 /**
  * 幂等建列：按名匹配——已存在且为多行文本则复用；重名但类型不符则跳过并警告；不存在才新建。
+ * 多个新列并行创建（此前串行，5 列要等 5 次 RTT）。
  * @param {ITable} table
  * @param {string[]} names 列名列表（输出1…输出N）
  * @returns {Promise<{fieldIds: string[], created: string[], reused: string[], skipped: {name:string,type:number}[], warnings: string[]}>}
@@ -162,6 +166,7 @@ export async function ensureColumns(table, names) {
   const reused = [];
   const skipped = [];
   const warnings = [];
+  const toCreate = [];
 
   for (const name of names) {
     const exist = byName.get(name);
@@ -175,19 +180,51 @@ export async function ensureColumns(table, names) {
       }
       continue;
     }
-    const res = await table.addField({ type: FIELD_TYPE_TEXT, name });
-    const fid = normalizeFieldId(res);
-    if (!fid) throw new Error(`创建列「${name}」失败：addField 未返回字段 id（返回=${JSON.stringify(res)}）`);
-    fieldIds.push(fid);
-    created.push(name);
-    byName.set(name, { id: fid, name, type: FIELD_TYPE_TEXT });
+    toCreate.push(name);
+    fieldIds.push(null); // 占位，建列完成后回填，保持与 names 顺序一致
   }
 
-  if (created.length) {
-    // 索引生效等待，避免立即写入静默失败
-    await sleep(2000);
+  if (toCreate.length) {
+    // 并行建列；addField 返回形态归一化（normalizeFieldId 五形态兼容）
+    const createdCols = await Promise.all(toCreate.map(async (name) => {
+      try {
+        const res = await table.addField({ type: FIELD_TYPE_TEXT, name });
+        const fid = normalizeFieldId(res);
+        if (!fid) throw new Error(`addField 未返回字段 id（返回=${JSON.stringify(res)}）`);
+        return { name, fid };
+      } catch (e) {
+        throw new Error(`创建列「${name}」失败：${String(e && e.message || e)}`);
+      }
+    }));
+    const fidSet = new Set();
+    for (const { name, fid } of createdCols) {
+      created.push(name);
+      fidSet.add(fid);
+      fieldIds[names.indexOf(name)] = fid;
+      byName.set(name, { id: fid, name, type: FIELD_TYPE_TEXT });
+    }
+    // 索引生效等待（探测式）：轮询字段元数据直到新列全部可见，避免立即写入静默失败。
+    // 元数据可见 ≈ 索引就绪的可靠前兆；探测不到时回退固定等待兜底。
+    await waitForFields(table, fidSet);
   }
   return { fieldIds, created, reused, skipped, warnings };
+}
+
+/** 轮询字段元数据直到 fidSet 全部可见；最多 ~3s，超时再固定等 1.5s 兜底 */
+async function waitForFields(table, fidSet, { interval = 250, maxTries = 12, settleMs = 300 } = {}) {
+  const deadlineFids = new Set(fidSet);
+  for (let i = 0; i < maxTries && deadlineFids.size; i++) {
+    await sleep(interval);
+    try {
+      const metas = unwrapArray(await table.getFieldMetaList());
+      for (const m of metas) deadlineFids.delete(m.id);
+    } catch (e) { /* 单次轮询失败忽略，继续重试 */ }
+  }
+  if (deadlineFids.size) {
+    await sleep(1500); // 元数据迟迟不可见：回退固定等待兜底
+  } else {
+    await sleep(settleMs); // 全部可见后再留少量缓冲
+  }
 }
 
 /** addField 返回归一化：字符串 / {id} / {fieldId} / {field.id} / {data.id} */

@@ -26,18 +26,27 @@ export function fillSelect(sel, options, placeholder) {
 }
 
 /**
- * 模态弹窗：返回 { close, overlay }。
- * - 进入/退出均有动画（遮罩模糊淡入、卡片弹入）；点遮罩 / 按 Esc 可关（可被 options.dismissible=false 禁用）。
+ * 模态弹窗（堆叠式）。
+ * - 多个弹窗可并存叠放（后开在上层）：设置弹窗上叠「验证结果」、确认门上叠「错误提示」
+ *   都不再互相顶掉——此前互斥式移除 overlay 曾导致 ①验证结果吞掉设置弹窗 ②确认门
+ *   Promise 永久悬挂两个问题。
+ * - Esc / 点遮罩只关最上层；closeAllModals() 立即清空全部（用于重新打开设置等显式替换场景）。
  * - 按钮支持 { label, primary, danger, onClick, keepOpen }：
  *   onClick 返回 false 时不自动关闭；否则点击后自动关闭（keepOpen:true 同效）。
  */
+const liveModals = new Set();
+
+/** 立即关闭所有弹窗（无退出动画）。openSettings 等需要「替换」语义的场景调用。 */
+export function closeAllModals() {
+  for (const m of [...liveModals]) m.close(true);
+}
+
+function isTopmost(overlay) {
+  const all = document.querySelectorAll('.modal-overlay');
+  return all.length && all[all.length - 1] === overlay;
+}
+
 export function showModal(title, contentNode, buttons = [], options = {}) {
-  // 互斥：同一时间只保留一个弹窗。
-  // 【根修】此前 openSettings() 切换服务商时直接重新 showModal，旧 overlay 未移除，
-  // DOM 中出现两个 #setProvider —— $('setProvider') 命中旧的（Agnes）下拉，
-  // 点「完成」时 verifyCurrentModel 把 Agnes 配置覆盖回 localStorage，
-  // 用户刚保存的「自定义」配置被吞。清理旧 overlay 后 $('id') 必然命中当前弹窗。
-  document.querySelectorAll('.modal-overlay').forEach((ov) => ov.remove());
   const overlay = el('div', { class: 'modal-overlay' });
   const box = el('div', { class: 'modal-box' },
     el('div', { class: 'modal-title' }, title),
@@ -65,10 +74,12 @@ export function showModal(title, contentNode, buttons = [], options = {}) {
     closed = true;
     document.removeEventListener('keydown', onKey);
     overlay.remove();
+    liveModals.delete(api);
     options.onClose && options.onClose();
   }
-  function close() {
+  function close(immediate = false) {
     if (closed) return;
+    if (immediate) { finish(); return; }
     overlay.classList.add('closing');
     // 仅当退出动画（overlayOut）播完才移除，避免入场动画误触发
     overlay.addEventListener('animationend', (e) => {
@@ -76,12 +87,32 @@ export function showModal(title, contentNode, buttons = [], options = {}) {
     }, { once: true });
     setTimeout(finish, 260); // 兜底
   }
-  function onKey(e) { if (e.key === 'Escape') close(); }
+  function onKey(e) {
+    if (e.key === 'Escape' && isTopmost(overlay)) close();
+  }
   if (options.dismissible !== false) {
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay && isTopmost(overlay)) close();
+    });
     document.addEventListener('keydown', onKey);
   }
-  return { close, overlay };
+  const api = { close, overlay };
+  liveModals.add(api);
+  return api;
+}
+
+/**
+ * 非阻塞轻提示（toast），替代「已请求取消」这类打断式弹窗。
+ * @param {string} msg
+ * @param {number} duration 自动消失毫秒数
+ */
+export function showToast(msg, duration = 2600) {
+  const t = el('div', { class: 'toast' }, msg);
+  document.body.appendChild(t);
+  setTimeout(() => {
+    t.classList.add('out');
+    setTimeout(() => t.remove(), 320);
+  }, duration);
 }
 
 /** 格式化 ETA 秒数为 mm:ss */
